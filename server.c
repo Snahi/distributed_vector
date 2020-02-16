@@ -9,9 +9,13 @@
 #include <pthread.h>
 
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // const
+///////////////////////////////////////////////////////////////////////////////////////////////////
 #define INITIAL_COMMAND "c"
 #define EXIT_COMMAND "q"
+
 // init vector
 #define NEW_VECTOR_CREATED 1
 #define VECTOR_ALREADY_EXISTS 0
@@ -43,8 +47,20 @@ struct init_msg {
 // function declarations
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+
+/* 
+    initializes server 
+*/
 void init();
+/*
+    creates and opens queues to listen for requests
+*/
 void initialize_request_queues();
+/*
+    generic method for starting threads for requests. thread_function depends on queue from
+    which server reads. Main thread waits till arguments are copied to new thread.
+*/
 int start_request_thread(void* (*thread_function)(void*), void* p_args);
 /*
     set attributes and open a queue for vector initialization.
@@ -53,12 +69,18 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args);
     QUEUE_OPEN_ERROR    if error occurred during opening the queue
 */
 int initialize_init_vector_queue();
-int create_vector(char* name, int size);
 /*
-    read user input withoug blocking current thread
+    creat a vector physically
 */
+int create_vector(char* name, int size);
 void *init_vector(void* p_init_msg);
+/* 
+    starts a thread for reading user input
+*/
 int start_reading_user_input();
+/*
+    read user input withoug blocking current thread and store it in user_input global variable
+*/
 void *update_user_input(void*);
 
 
@@ -216,7 +238,7 @@ int initialize_init_vector_queue()
     q_init_vector_attr.mq_curmsgs = 0;                              // initially 0 messages
 
     int open_flags = O_CREAT | O_RDONLY | O_NONBLOCK;
-    mode_t permissions = S_IRUSR | S_IWUSR;             // allow reads and writes into queue
+    mode_t permissions = S_IRUSR | S_IWUSR;                         // allow reads and writes into queue
 
     if ((
         q_init_vector = mq_open(INIT_VECTOR_QUEUE_NAME, open_flags, permissions, 

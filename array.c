@@ -10,7 +10,11 @@
 #include <unistd.h>
 #include <errno.h>
 
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // const
+///////////////////////////////////////////////////////////////////////////////////////////////////
 #define NAME_REGEX "^[a-zA-Z0-9]+$"
 
 // init
@@ -41,6 +45,9 @@ struct init_msg {
 int is_init_data_valid(char* name, int size);
 int is_name_valid(char* name);
 int open_server_init_queue(mqd_t* p_queue);
+/*
+    creates and opens unique queue for getting integer response from server
+*/
 int open_resp_queue(char* que_name, mqd_t* p_queue);
 int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_q_server, 
     mqd_t* p_q_resp);
