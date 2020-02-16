@@ -45,6 +45,7 @@ struct init_msg {
 
 void init();
 void initialize_request_queues();
+int start_request_thread(void* (*thread_function)(void*), void* p_args);
 /*
     set attributes and open a queue for vector initialization.
     returns:
@@ -52,7 +53,7 @@ void initialize_request_queues();
     QUEUE_OPEN_ERROR    if error occurred during opening the queue
 */
 int initialize_init_vector_queue();
-int start_init_vector_thread(struct init_msg* p_init_msg);
+int create_vector(char* name, int size);
 /*
     read user input withoug blocking current thread
 */
@@ -107,7 +108,7 @@ int main (int argc, char **argv)
             if (mq_receive(q_init_vector, (char*) &in_init_msg, INIT_MSG_SIZE, NULL) != -1)
             {
                 // init queue
-                if (start_init_vector_thread(&in_init_msg) != REQUEST_THREAD_CREATE_SUCCESS)
+                if (start_request_thread(init_vector, &in_init_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
                     perror("REQUEST THREAD could not create thread for request");
                 }
@@ -156,6 +157,37 @@ void initialize_request_queues()
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+// request threads
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int start_request_thread(void* (*thread_function)(void*), void* p_args)
+{
+    int res = REQUEST_THREAD_CREATE_SUCCESS;
+    pthread_t th_id;
+    if (pthread_create(&th_id, &request_thread_attr, thread_function, p_args) != 0)
+    {
+        res = REQUEST_THREAD_CREATE_FAIL;
+    }
+    else // thread created
+    {
+        // wait until thread copies message
+        pthread_mutex_lock(&mutex_msg);
+        while (msg_not_copied)
+        {
+            pthread_cond_wait(&cond_msg, &mutex_msg);
+        }
+        msg_not_copied = 1; // thread changed it to 0 after copying message, change it to initial state
+        pthread_mutex_unlock(&mutex_msg);
+    }
+
+    return res;
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // init vector functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -187,31 +219,6 @@ int initialize_init_vector_queue()
 
 
 
-int start_init_vector_thread(struct init_msg* p_init_msg)
-{
-    int res = REQUEST_THREAD_CREATE_SUCCESS;
-    pthread_t th_id;
-    if (pthread_create(&th_id, &request_thread_attr, init_vector, p_init_msg) != 0)
-    {
-        res = REQUEST_THREAD_CREATE_FAIL;
-    }
-    else // thread created
-    {
-        // wait until thread copies message
-        pthread_mutex_lock(&mutex_msg);
-        while (msg_not_copied)
-        {
-            pthread_cond_wait(&cond_msg, &mutex_msg);
-        }
-        msg_not_copied = 1; // thread changed it to 0 after copying message, change it to initial state
-        pthread_mutex_unlock(&mutex_msg);
-    }
-
-    return res;
-}
-
-
-
 void *init_vector(void* p_init_msg)
 {
     struct init_msg init_msg;
@@ -224,10 +231,7 @@ void *init_vector(void* p_init_msg)
     pthread_mutex_unlock(&mutex_msg);
 
     // create vector
-    int response = NEW_VECTOR_CREATED;
-
-    printf("name: %s, size: %d, respQueue: %s\n", init_msg.name, init_msg.size, 
-        init_msg.resp_queue_name);
+    int response = create_vector(init_msg.name, init_msg.size);
 
     // send response
     mqd_t q_resp;
@@ -249,6 +253,13 @@ void *init_vector(void* p_init_msg)
     }
     
     pthread_exit(0);
+}
+
+
+
+int create_vector(char* name, int size)
+{
+    return -1;
 }
 
 
