@@ -236,9 +236,15 @@ int start_reading_user_input()
 
 void *update_user_input(void* arg)
 {
+    char* res = NULL;
+
     while(strcmp(user_input, EXIT_COMMAND) != 0)
     {
-        fgets(user_input, 2, stdin);
+        res = fgets(user_input, 2, stdin);
+        if (res == NULL)
+        {
+            perror("USER INPUT error during reading user input");
+        }
     }
 
     pthread_exit(0);
