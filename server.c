@@ -126,6 +126,11 @@ int main (int argc, char **argv)
         perror("USER INPUT READ could not start reading for user input");
     }
 
+    // clean up
+    pthread_mutex_destroy(&mutex_msg);
+    pthread_cond_destroy(&cond_msg);
+    pthread_attr_destroy(&request_thread_attr);
+
     // close queues
     mq_close(q_init_vector);
     mq_unlink(INIT_VECTOR_QUEUE_NAME);
@@ -173,7 +178,7 @@ int start_init_vector_thread(struct init_msg* p_init_msg)
     {
         res = REQUEST_THREAD_CREATE_FAIL;
     }
-    else    // thread created
+    else // thread created
     {
         // wait until thread copies message
         pthread_mutex_lock(&mutex_msg);
