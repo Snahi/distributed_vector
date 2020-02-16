@@ -227,7 +227,7 @@ void *init_vector(void* p_init_msg)
 
         if (mq_close(q_resp) == -1)
         {
-            perror ("RESPONSE QUEUE could not open response queue");
+            perror ("RESPONSE QUEUE could not close response queue");
         }
     }
     

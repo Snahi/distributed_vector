@@ -5,12 +5,22 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <mqueue.h>
+#include <regex.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <errno.h>
+
+// const
+#define NAME_REGEX "^[a-zA-Z0-9]+$"
 
 // init
-#define INIT_VECTOR_QUEUE_NAME   "/init"
+#define INIT_VECTOR_QUEUE_NAME "/init"
 #define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
-#define MAX_VECTOR_NAME_LEN 40
+#define MAX_VECTOR_NAME_LEN 39
 #define MAX_RESP_QUEUE_NAME_LEN 64
+#define NEW_VECTOR_CREATED 1
+#define VECTOR_ALREADY_EXISTS 0
+#define VECTOR_CREATION_ERROR -1
 
 struct init_msg {
     char name[MAX_VECTOR_NAME_LEN];
@@ -22,78 +32,186 @@ struct init_msg {
 
 
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// function declarations
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int is_name_valid(char* name);
+int open_resp_queue(char* que_name, mqd_t* p_queue);
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// init
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
 int init(char* name, int size)
 {
+    int result = NEW_VECTOR_CREATED;
+
+    int is_size_val = size > 0;
+    int is_name_val = is_name_valid(name);
+
+    if (is_size_val && is_name_val)
+    {
+        // open queue to send init vector message to server
+        mqd_t q_server_init;
+
+        if ((q_server_init = mq_open(INIT_VECTOR_QUEUE_NAME, O_WRONLY)) == -1)
+        {
+            perror("Cannot open init vector server queue from client perspective");
+            result = VECTOR_CREATION_ERROR;
+        }
+        else
+        {
+            // queue for response from server
+            mqd_t q_resp;
+            char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
+            if (open_resp_queue(resp_que_name, &q_resp) == 1)
+            {
+                struct init_msg msg;
+                msg.size = 10;
+                strcpy(msg.name, name);
+                strcpy(msg.resp_queue_name, resp_que_name);
+
+                if (mq_send(q_server_init, (char*) &msg, INIT_MSG_SIZE, 0) == -1)
+                {
+                    perror("Cannot send init vector message to server");
+                    result = VECTOR_CREATION_ERROR;
+                }
+                else
+                {
+                    if (mq_receive(q_resp, (char*) &result, sizeof(int), NULL) == -1)
+                    {
+                        perror("Cannot receive response message in init vector");
+                        result = VECTOR_CREATION_ERROR;
+                    }
+                }
+
+                if (mq_close (q_resp) == -1)
+                {
+                    perror ("Cannot close response queue");
+                }
+
+                if (mq_unlink(resp_que_name) == -1)
+                {
+                    perror("Cannot unlink response queue");
+                }
+            }
+            else
+            {
+                perror("RESPONSE QUEUE couldn't open response queue");
+                result = VECTOR_CREATION_ERROR;
+            }
+
+            if (mq_close (q_server_init) == -1) 
+            {
+                perror ("cannot close q_server_init queue");
+            }
+        }
+    }
+    else
+    {
+        result = VECTOR_CREATION_ERROR;
+    }
     
+    return result;
+}
+
+
+
+int is_name_valid(char* name)
+{
+    int res = 1;
+    size_t len = strlen(name);
+
+    if (len >= 1 && len <= MAX_VECTOR_NAME_LEN)
+    {
+        regex_t regex;
+        if (regcomp(&regex, NAME_REGEX, REG_EXTENDED | REG_NOSUB) == 0)
+        {
+            if (regexec(&regex, name, 0, NULL, 0) == 0)
+            {
+                res = 1;
+            }
+            else
+            {
+                res = 0;
+            }
+            regfree(&regex);
+        }
+        else
+        {
+            res = 0;
+            printf("Could not compile regex\n");
+        }
+    }
+    else
+    {
+        res = 0;
+    }
+    
+    return res;
+}
+
+
+
+int open_resp_queue(char* que_name, mqd_t* p_queue)
+{
+    struct mq_attr attr;
+    attr.mq_flags = 0;
+    attr.mq_maxmsg = 1;
+    attr.mq_msgsize = sizeof(int);
+    attr.mq_curmsgs = 0;
+
+    char local_que_name[MAX_RESP_QUEUE_NAME_LEN];
+
+    // make queue name with PID, in single thread client it will be unique
+    snprintf(local_que_name, MAX_RESP_QUEUE_NAME_LEN, "/initvector%d", getpid());
+    // flags which assure that queue with such name doesn't exist
+    int flags = O_CREAT | O_EXCL | O_RDONLY;
+    // will be used to generate unique name in case it's needed
+    char* random_str = "1";
+    // if name is not unique, add random number to it. If there is no more space
+    // start from the beginning
+    while((*p_queue = mq_open(local_que_name, flags, S_IRUSR | S_IWUSR, &attr)) == -1)
+    {
+        if (errno == EEXIST)
+        {
+            // reached maximum name len, reset the name
+            if (strlen(local_que_name) == MAX_RESP_QUEUE_NAME_LEN - 1)
+            {
+                snprintf(local_que_name, MAX_RESP_QUEUE_NAME_LEN, "initvector%d", getpid());
+            }
+            else
+            {
+                // generate random number and convert it to string
+                snprintf(random_str, 2, "%d", rand() % 10);
+                // append generated number to the name
+                strcat(local_que_name, random_str);
+            }
+        }
+        else // error occurred (but not because of non unique name)
+        {
+            return 0;
+        }
+    }
+
+    strcpy(que_name, local_que_name);
+    
+    return 1;
 }
 
 
 
 int main (int argc, char **argv)
 {
-    mqd_t q_server_init;    // queue to send init vector message to server
-
-    if ((q_server_init = mq_open(INIT_VECTOR_QUEUE_NAME, O_WRONLY)) == -1)
-    {
-        perror("Cannot open init vector server queue from client perspective");
-        exit(1);
-    }
-
-    mqd_t q_resp;   // queue for response from server
-    struct mq_attr q_resp_attr;
-    q_resp_attr.mq_flags = 0;
-    q_resp_attr.mq_maxmsg = 1;
-    q_resp_attr.mq_msgsize = sizeof(int);
-    q_resp_attr.mq_curmsgs = 0;
-
-    if ((q_resp = mq_open("/initResp", O_CREAT | O_RDONLY, S_IRUSR | S_IWUSR, &q_resp_attr)) == -1)
-    {
-        perror("Cannot open init vector response queue form client perspective");
-        exit(1);
-    }
-
-    struct init_msg msg;
-    msg.size = 10;
-    strcpy(msg.name, "hwdp");
-    strcpy(msg.resp_queue_name, "/initResp");
+    int res = init("hhhh", 10);
+    printf("%d\n", res);
     
-    int response = 100;
-
-    while (1)
-    {
-        if (mq_send(q_server_init, (char*) &msg, INIT_MSG_SIZE, 0) == -1)
-        {
-            perror("Cannot send init vector message to server");
-        }
-        else
-        {
-            printf("message sent\n");
-            
-            if (mq_receive(q_resp, (char*) &response, sizeof(int), NULL) == -1)
-            {
-                perror("Cannot receive response message in init vector");
-            }
-            else
-            {
-                printf("result: %d\n", response);
-            }
-            
-        }
-    }
-
-    if (mq_close (q_server_init) == -1) {
-        perror ("cannot close q_server_init queue");
-    }
-
-    if (mq_close (q_resp) == -1)
-    {
-        perror ("Cannot close response queue");
-    }
-
-    if (mq_unlink("/initResp") == -1)
-    {
-        perror("Cannot unlink response queue");
-    }
-
     exit (0);
 }
