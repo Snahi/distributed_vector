@@ -187,6 +187,17 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args)
 
 
 
+void copy_message(char* p_source, char* p_destination, int size)
+{
+    pthread_mutex_lock(&mutex_msg);                                 
+    memcpy(p_destination, p_source, size);   // copy message to local variable
+    msg_not_copied = 0;                                             // info for main thread to proceed
+    pthread_cond_signal(&cond_msg);               
+    pthread_mutex_unlock(&mutex_msg);
+}
+
+
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // init vector functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -222,17 +233,11 @@ int initialize_init_vector_queue()
 void *init_vector(void* p_init_msg)
 {
     struct init_msg init_msg;
-
-    // copy message
-    pthread_mutex_lock(&mutex_msg);                                 
-    memcpy((char*) &init_msg, (char*) p_init_msg, INIT_MSG_SIZE);   // copy message to local variable
-    msg_not_copied = 0;                                             // info for main thread to proceed
-    pthread_cond_signal(&cond_msg);               
-    pthread_mutex_unlock(&mutex_msg);
+    copy_message((char*) p_init_msg, (char*) &init_msg, INIT_MSG_SIZE);
 
     // create vector
     int response = create_vector(init_msg.name, init_msg.size);
-
+    
     // send response
     mqd_t q_resp;
     if ((q_resp = mq_open(init_msg.resp_queue_name, O_WRONLY)) == -1)
