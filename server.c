@@ -209,7 +209,8 @@ void *init_vector(void* p_init_msg)
     // create vector
     int response = NEW_VECTOR_CREATED;
 
-    printf("vecotr size: %d\n", init_msg.size);
+    printf("name: %s, size: %d, respQueue: %s\n", init_msg.name, init_msg.size, 
+        init_msg.resp_queue_name);
 
     // send response
     mqd_t q_resp;
@@ -222,6 +223,11 @@ void *init_vector(void* p_init_msg)
         if (mq_send(q_resp, (char*) &response, sizeof(int), 0) == -1)
         {
             perror("RESPONSE ERROR could not send response to init vector");
+        }
+
+        if (mq_close(q_resp) == -1)
+        {
+            perror ("RESPONSE QUEUE could not open response queue");
         }
     }
     
