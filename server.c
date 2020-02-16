@@ -167,7 +167,7 @@ int initialize_init_vector_queue()
 
     struct mq_attr q_init_vector_attr;
     
-    q_init_vector_attr.mq_flags = O_NONBLOCK;                       // cannot wait, because there are also other requests
+    q_init_vector_attr.mq_flags = 0;                                // ingnored for MQ_OPEN
     q_init_vector_attr.mq_maxmsg = INIT_VECTOR_QUEUE_MAX_MESSAGES;
     q_init_vector_attr.mq_msgsize = INIT_MSG_SIZE;        
     q_init_vector_attr.mq_curmsgs = 0;                              // initially 0 messages
