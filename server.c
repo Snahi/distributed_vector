@@ -43,6 +43,8 @@ struct init_msg {
 // function declarations
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+void init();
+void initialize_request_queues();
 /*
     set attributes and open a queue for vector initialization.
     returns:
@@ -91,16 +93,7 @@ int main (int argc, char **argv)
 {
     printf("distributed vector server started\n");
 
-    pthread_mutex_init(&mutex_msg, NULL);
-    pthread_cond_init(&cond_msg, NULL);
-    pthread_attr_init(&request_thread_attr);
-    pthread_attr_setdetachstate(&request_thread_attr, PTHREAD_CREATE_DETACHED);
-
-    if (initialize_init_vector_queue() != QUEUE_INIT_SUCCESS)
-    {
-        perror("INIT ERROR: could not open init vector queue");
-        exit(-1);
-    }
+    init();
 
     if (start_reading_user_input() == 0)
     {
@@ -108,12 +101,12 @@ int main (int argc, char **argv)
         struct init_msg in_init_msg;
 
         // listen for requests
-
         while (strcmp(user_input, EXIT_COMMAND) != 0)
         {
             // read messages in all queues
             if (mq_receive(q_init_vector, (char*) &in_init_msg, INIT_MSG_SIZE, NULL) != -1)
             {
+                // init queue
                 if (start_init_vector_thread(&in_init_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
                     perror("REQUEST THREAD could not create thread for request");
@@ -134,6 +127,30 @@ int main (int argc, char **argv)
     // close queues
     mq_close(q_init_vector);
     mq_unlink(INIT_VECTOR_QUEUE_NAME);
+}
+
+
+
+void init()
+{
+    pthread_mutex_init(&mutex_msg, NULL);
+    pthread_cond_init(&cond_msg, NULL);
+    pthread_attr_init(&request_thread_attr);
+    pthread_attr_setdetachstate(&request_thread_attr, PTHREAD_CREATE_DETACHED);
+
+    initialize_request_queues();
+}
+
+
+
+void initialize_request_queues()
+{
+    // init queue
+    if (initialize_init_vector_queue() != QUEUE_INIT_SUCCESS)
+    {
+        perror("INIT ERROR: could not open init vector queue");
+        exit(-1);
+    }
 }
 
 
