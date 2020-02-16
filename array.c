@@ -38,8 +38,12 @@ struct init_msg {
 
 
 
+int is_init_data_valid(char* name, int size);
 int is_name_valid(char* name);
+int open_server_init_queue(mqd_t* p_queue);
 int open_resp_queue(char* que_name, mqd_t* p_queue);
+int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_q_server, 
+    mqd_t* p_q_resp);
 
 
 
@@ -53,10 +57,7 @@ int init(char* name, int size)
 {
     int result = NEW_VECTOR_CREATED;
 
-    int is_size_val = size > 0;
-    int is_name_val = is_name_valid(name);
-
-    if (is_size_val && is_name_val)
+    if (is_init_data_valid(name, size))
     {
         // open queue to send init vector message to server
         mqd_t q_server_init;
@@ -73,34 +74,14 @@ int init(char* name, int size)
             char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
             if (open_resp_queue(resp_que_name, &q_resp) == 1)
             {
-                struct init_msg msg;
-                msg.size = 10;
-                strcpy(msg.name, name);
-                strcpy(msg.resp_queue_name, resp_que_name);
+                result = create_vector_on_server(name, size, resp_que_name, &q_server_init, &q_resp);
 
-                if (mq_send(q_server_init, (char*) &msg, INIT_MSG_SIZE, 0) == -1)
-                {
-                    perror("Cannot send init vector message to server");
-                    result = VECTOR_CREATION_ERROR;
-                }
-                else
-                {
-                    if (mq_receive(q_resp, (char*) &result, sizeof(int), NULL) == -1)
-                    {
-                        perror("Cannot receive response message in init vector");
-                        result = VECTOR_CREATION_ERROR;
-                    }
-                }
-
+                // close and delete response queue
                 if (mq_close (q_resp) == -1)
-                {
                     perror ("Cannot close response queue");
-                }
 
                 if (mq_unlink(resp_que_name) == -1)
-                {
                     perror("Cannot unlink response queue");
-                }
             }
             else
             {
@@ -114,12 +95,20 @@ int init(char* name, int size)
             }
         }
     }
-    else
-    {
+    else 
         result = VECTOR_CREATION_ERROR;
-    }
     
     return result;
+}
+
+
+
+int is_init_data_valid(char* name, int size)
+{
+    int is_size_val = size > 0;
+    int is_name_val = is_name_valid(name);
+
+    return is_size_val && is_name_val;
 }
 
 
@@ -208,10 +197,42 @@ int open_resp_queue(char* que_name, mqd_t* p_queue)
 
 
 
+int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_q_server, 
+    mqd_t* p_q_resp)
+{
+    int result = NEW_VECTOR_CREATED;
+
+    // create message
+    struct init_msg msg;
+    msg.size = size;
+    strcpy(msg.name, name);
+    strcpy(msg.resp_queue_name, resp_que_name);
+
+    // send message
+    if (mq_send(*p_q_server, (char*) &msg, INIT_MSG_SIZE, 0) == -1)
+    {
+        perror("Cannot send init vector message to server");
+        result = VECTOR_CREATION_ERROR;
+    }
+    else // message send successfully
+    {
+        // wait for response
+        if (mq_receive(*p_q_resp, (char*) &result, sizeof(int), NULL) == -1)
+        {
+            perror("Cannot receive response message in init vector");
+            result = VECTOR_CREATION_ERROR;
+        }
+    }
+
+    return result;
+}
+
+
+
 int main (int argc, char **argv)
 {
-    int res = init("hhhh", 10);
+    int res = init("hhhh", 11);
     printf("%d\n", res);
-    
+
     exit (0);
 }
