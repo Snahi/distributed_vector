@@ -238,7 +238,7 @@ int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_
 
 int main (int argc, char **argv)
 {
-    int res = init("hhhh", 11);
+    int res = init("hhhh", 12);
     printf("%d\n", res);
 
     exit (0);

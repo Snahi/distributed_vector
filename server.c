@@ -13,6 +13,10 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // const
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+// storage
+#define VECTORS_FOLDER "vectors/"
+#define VECTOR_FILE_EXTENSION ".txt"
+
 // user input
 #define INITIAL_COMMAND "c"
 #define EXIT_COMMAND "q"
@@ -31,7 +35,7 @@
 // init
 #define INIT_VECTOR_QUEUE_NAME "/init"
 #define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
-#define MAX_VECTOR_NAME_LEN 40
+#define MAX_VECTOR_NAME_LEN 39
 #define MAX_RESP_QUEUE_NAME_LEN 64
 
 struct init_msg {
@@ -84,6 +88,8 @@ int start_reading_user_input();
     read user input and store it in user_input global variable
 */
 void *update_user_input(void*);
+int create_array_file(char* name, int size);
+int get_vector_size(char* name);
 
 
 
@@ -343,7 +349,119 @@ void *init_vector(void* p_init_msg)
 
 int create_vector(char* name, int size)
 {
-    return -1;
+    int res = NEW_VECTOR_CREATED;
+
+    int old_vec_size = get_vector_size(name);
+    
+    if (old_vec_size < 0) // vector doesn't exist
+    {
+        if (create_array_file(name, size))
+            res = NEW_VECTOR_CREATED;
+        else
+            res = VECTOR_CREATION_ERROR;
+    }
+    else if (old_vec_size == size)
+        res = VECTOR_ALREADY_EXISTS;
+    else
+        res = VECTOR_CREATION_ERROR;
+    
+    return res;
+}
+
+
+
+void get_full_vector_file_name(char* file_name, char* vector_name)
+{
+    strcpy(file_name, VECTORS_FOLDER);
+    strcat(file_name, vector_name);
+    strcat(file_name, VECTOR_FILE_EXTENSION);
+}
+
+
+
+int get_full_vector_file_name_max_len()
+{
+    return MAX_VECTOR_NAME_LEN + strlen(VECTOR_FILE_EXTENSION) + 1;
+}
+
+
+
+int get_vector_size(char* name)
+{
+    int len = -1;
+
+    char file_name[get_full_vector_file_name_max_len()];
+    get_full_vector_file_name(file_name, name);
+
+    FILE* fp;
+    fp = fopen(file_name, "r");
+
+    if (fp != NULL)
+    {
+        char len_str[20];
+        if (fgets(len_str, 20, fp) != NULL)
+        {
+            sscanf(len_str, "%d", &len);
+        }
+        else
+        {
+            len = -1;
+        }
+        
+        if (fclose(fp) != 0)
+        {
+            len = -1;
+        }
+    }
+    else
+    {
+        len = -1;
+    }
+    
+    return len;
+}
+
+
+
+int create_array_file(char* name, int size)
+{
+    int res = 1;
+
+    char file_name[get_full_vector_file_name_max_len()];
+    get_full_vector_file_name(file_name, name);
+   
+    FILE* fp;
+    fp = fopen(file_name, "w");
+
+    if (fp != NULL)
+    {
+        if (fprintf(fp, "%d\n", size) > 0)
+        {
+            for (int i = 0; i < size; i++)
+            {
+                if (fprintf(fp, "%d\n", 0) < 0)
+                {
+                    res = 0;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            res = 0;
+        }
+        
+        if (fclose(fp) != 0)
+        {
+            res = 0;
+        }
+    }
+    else
+    {
+        res = 0;
+    }
+    
+    return res;
 }
 
 
