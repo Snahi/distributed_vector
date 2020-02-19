@@ -260,6 +260,9 @@ int initialize_vector_mutexes()
                 }
             }
         }
+
+        if (closedir(vec_dir) != 0)
+            res = 0;
     }
     else
         res = 0;
