@@ -13,6 +13,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // const
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+// user input
 #define INITIAL_COMMAND "c"
 #define EXIT_COMMAND "q"
 
@@ -50,13 +51,13 @@ struct init_msg {
 
 
 /* 
-    initializes server 
+    initializes server. 1 -> success
 */
-void init();
+int init();
 /*
-    creates and opens queues to listen for requests
+    creates and opens queues to listen for requests. 1 -> success
 */
-void initialize_request_queues();
+int initialize_request_queues();
 /*
     generic method for starting threads for requests. thread_function depends on queue from
     which server reads. Main thread waits till arguments are copied to new thread.
@@ -73,13 +74,14 @@ int initialize_init_vector_queue();
     creat a vector physically
 */
 int create_vector(char* name, int size);
+int copy_message(char* p_source, char* p_destination, int size);
 void *init_vector(void* p_init_msg);
 /* 
     starts a thread for reading user input
 */
 int start_reading_user_input();
 /*
-    read user input withoug blocking current thread and store it in user_input global variable
+    read user input and store it in user_input global variable
 */
 void *update_user_input(void*);
 
@@ -104,6 +106,9 @@ pthread_t user_input_thread;
 // queue descriptors
 mqd_t q_init_vector;
 
+// storage
+int** vectors;
+
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -116,7 +121,10 @@ int main (int argc, char **argv)
 {
     printf("distributed vector server started\n");
 
-    init();
+    if (init() != 1)
+    {
+        exit(1);
+    }
 
     if (start_reading_user_input() == 0)
     {
@@ -126,7 +134,7 @@ int main (int argc, char **argv)
         // listen for requests
         while (strcmp(user_input, EXIT_COMMAND) != 0)
         {
-            // read messages in all queues
+            // read messages in all queues if available
             if (mq_receive(q_init_vector, (char*) &in_init_msg, INIT_MSG_SIZE, NULL) != -1)
             {
                 // init queue
@@ -143,37 +151,48 @@ int main (int argc, char **argv)
     }
 
     // clean up
-    pthread_mutex_destroy(&mutex_msg);
-    pthread_cond_destroy(&cond_msg);
-    pthread_attr_destroy(&request_thread_attr);
+    if (pthread_mutex_destroy(&mutex_msg) != 0)
+        perror("CLEAN UP could not destroy mutex");
+    if (pthread_cond_destroy(&cond_msg) != 0)
+        perror("CLEAN UP could not destroy conditional variable");
+    if (pthread_attr_destroy(&request_thread_attr) != 0)
+        perror("CLEAN UP could not destroy pthread attributes");
 
     // close queues
-    mq_close(q_init_vector);
-    mq_unlink(INIT_VECTOR_QUEUE_NAME);
+    if (mq_close(q_init_vector) != 0)
+        perror("CLEAN UP could not close inint vector queue");
+    if (mq_unlink(INIT_VECTOR_QUEUE_NAME) != 0)
+        perror("CLEAN UP could not unlink init vector queue");
 }
 
 
 
-void init()
+int init()
 {
-    pthread_mutex_init(&mutex_msg, NULL);
-    pthread_cond_init(&cond_msg, NULL);
-    pthread_attr_init(&request_thread_attr);
-    pthread_attr_setdetachstate(&request_thread_attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_mutex_init(&mutex_msg, NULL) != 0)
+        return 0;
+    if (pthread_cond_init(&cond_msg, NULL) != 0)
+        return 0;
+    if (pthread_attr_init(&request_thread_attr) != 0)
+        return 0;
+    if (pthread_attr_setdetachstate(&request_thread_attr, PTHREAD_CREATE_DETACHED) != 0)
+        return 0;
 
-    initialize_request_queues();
+    return initialize_request_queues();
 }
 
 
 
-void initialize_request_queues()
+int initialize_request_queues()
 {
     // init queue
     if (initialize_init_vector_queue() != QUEUE_INIT_SUCCESS)
     {
         perror("INIT ERROR: could not open init vector queue");
-        exit(-1);
+        return 0;
     }
+
+    return 1;
 }
 
 
@@ -195,13 +214,27 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args)
     else // thread created
     {
         // wait until thread copies message
-        pthread_mutex_lock(&mutex_msg);
-        while (msg_not_copied)
+        if (pthread_mutex_lock(&mutex_msg) == 0)
         {
-            pthread_cond_wait(&cond_msg, &mutex_msg);
+            while (msg_not_copied)
+            {
+                if (pthread_cond_wait(&cond_msg, &mutex_msg) != 0)
+                {
+                    res = REQUEST_THREAD_CREATE_FAIL;
+                    break;
+                }
+            }
+            msg_not_copied = 1; // thread changed it to 0 after copying message, change it to initial state
+            if (pthread_mutex_unlock(&mutex_msg) != 0)
+            {
+                res = REQUEST_THREAD_CREATE_FAIL;
+            }
         }
-        msg_not_copied = 1; // thread changed it to 0 after copying message, change it to initial state
-        pthread_mutex_unlock(&mutex_msg);
+        else // couldn't lock mutex
+        {
+            res = REQUEST_THREAD_CREATE_FAIL;
+        }
+        
     }
 
     return res;
@@ -209,13 +242,31 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args)
 
 
 
-void copy_message(char* p_source, char* p_destination, int size)
+int copy_message(char* p_source, char* p_destination, int size)
 {
-    pthread_mutex_lock(&mutex_msg);                                 
-    memcpy(p_destination, p_source, size);   // copy message to local variable
-    msg_not_copied = 0;                                             // info for main thread to proceed
-    pthread_cond_signal(&cond_msg);               
-    pthread_mutex_unlock(&mutex_msg);
+    int res = 1;
+    if (pthread_mutex_lock(&mutex_msg) == 0)
+    {
+        memcpy(p_destination, p_source, size);   // copy message to local variable
+        msg_not_copied = 0;                      // info for main thread to proceed
+        if (pthread_cond_signal(&cond_msg) == 0)
+        {
+            if (pthread_mutex_unlock(&mutex_msg) != 0)
+            {
+                res = 0;
+            }
+        }
+        else
+        {
+            res = 0;
+        }               
+    }     
+    else
+    {
+        res = 0;
+    }
+
+    return res;                         
 }
 
 
@@ -255,29 +306,35 @@ int initialize_init_vector_queue()
 void *init_vector(void* p_init_msg)
 {
     struct init_msg init_msg;
-    copy_message((char*) p_init_msg, (char*) &init_msg, INIT_MSG_SIZE);
-
-    // create vector
-    int response = create_vector(init_msg.name, init_msg.size);
-    
-    // send response
-    mqd_t q_resp;
-    if ((q_resp = mq_open(init_msg.resp_queue_name, O_WRONLY)) == -1)
+    if (copy_message((char*) p_init_msg, (char*) &init_msg, INIT_MSG_SIZE) == 1)
     {
-        perror("RESPONSE ERROR could not open queue for sending response to init vector");
+        // create vector
+        int response = create_vector(init_msg.name, init_msg.size);
+        
+        // send response
+        mqd_t q_resp;
+        if ((q_resp = mq_open(init_msg.resp_queue_name, O_WRONLY)) == -1)
+        {
+            perror("RESPONSE ERROR could not open queue for sending response to init vector");
+        }
+        else
+        {
+            if (mq_send(q_resp, (char*) &response, sizeof(int), 0) == -1)
+            {
+                perror("RESPONSE ERROR could not send response to init vector");
+            }
+
+            if (mq_close(q_resp) == -1)
+            {
+                perror ("RESPONSE QUEUE could not close response queue");
+            }
+        }
     }
     else
     {
-        if (mq_send(q_resp, (char*) &response, sizeof(int), 0) == -1)
-        {
-            perror("RESPONSE ERROR could not send response to init vector");
-        }
-
-        if (mq_close(q_resp) == -1)
-        {
-            perror ("RESPONSE QUEUE could not close response queue");
-        }
+        perror("INIT VECTOR couldn't copy_message");
     }
+    
     
     pthread_exit(0);
 }
@@ -305,7 +362,11 @@ int start_reading_user_input()
     
     int res = pthread_create(&user_input_thread, &attr, update_user_input, NULL);
 
-    pthread_attr_destroy(&attr);
+    if (pthread_attr_destroy(&attr) != 0)
+    {
+        res = -1;
+        perror("START READING USER INPUT could not destroy attributes");
+    }
 
     return res;
 }
