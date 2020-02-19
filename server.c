@@ -7,16 +7,14 @@
 #include <mqueue.h>
 #include <unistd.h>         // for unblock read function
 #include <pthread.h>
+#include "vec.h"
+#include <dirent.h>
 
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // const
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// storage
-#define VECTORS_FOLDER "vectors/"
-#define VECTOR_FILE_EXTENSION ".txt"
-
 // user input
 #define INITIAL_COMMAND "c"
 #define EXIT_COMMAND "q"
@@ -46,7 +44,14 @@ struct init_msg {
 
 #define INIT_MSG_SIZE sizeof(struct init_msg)
 
+// storage
+#define VECTORS_FOLDER "vectors/"
+#define VECTOR_FILE_EXTENSION ".txt"
 
+struct vector_mutex {
+    char vector_name[MAX_VECTOR_NAME_LEN];
+    pthread_mutex_t mutex;
+};
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // function declarations
@@ -62,6 +67,10 @@ int init();
     creates and opens queues to listen for requests. 1 -> success
 */
 int initialize_request_queues();
+/*
+    creates mutex for every stored vector
+*/
+int initialize_vector_mutexes();
 /*
     generic method for starting threads for requests. thread_function depends on queue from
     which server reads. Main thread waits till arguments are copied to new thread.
@@ -113,7 +122,7 @@ pthread_t user_input_thread;
 mqd_t q_init_vector;
 
 // storage
-int** vectors;
+struct vector_mutex* vector_mutexes;
 
 
 
@@ -131,7 +140,11 @@ int main (int argc, char **argv)
     {
         exit(1);
     }
-
+    
+    for (int i = 0; i < vector_size(vector_mutexes); i++)
+    {
+        printf("vec mutex: |%s|\n", vector_mutexes[i].vector_name);
+    }
     if (start_reading_user_input() == 0)
     {
         // messages
@@ -184,6 +197,9 @@ int init()
     if (pthread_attr_setdetachstate(&request_thread_attr, PTHREAD_CREATE_DETACHED) != 0)
         return 0;
 
+    if (!initialize_vector_mutexes())
+        return 0;
+
     return initialize_request_queues();
 }
 
@@ -199,6 +215,56 @@ int initialize_request_queues()
     }
 
     return 1;
+}
+
+
+
+void add_vector_mutex(char* vec_name)
+{
+    struct vector_mutex vec_mut;
+    strcpy(vec_mut.vector_name, vec_name);
+    vector_add(&vector_mutexes, vec_mut);
+}
+
+
+
+int initialize_vector_mutexes()
+{
+    int res = 1;
+
+    DIR* vec_dir;
+    struct dirent* vec_dir_ent;
+
+    if ((vec_dir = opendir(VECTORS_FOLDER)) != NULL)
+    {
+        vector_mutexes = vector_create();
+
+        int extension_len = strlen(VECTOR_FILE_EXTENSION);
+        char extension[extension_len + 1];
+        extension[extension_len] = '\0';
+        char f_name[MAX_VECTOR_NAME_LEN + extension_len + 1];
+        int f_name_len = 0;
+        char f_name_no_extension[MAX_VECTOR_NAME_LEN];
+
+        while ((vec_dir_ent = readdir(vec_dir)) != NULL)
+        {
+            strcpy(f_name, vec_dir_ent->d_name);
+            f_name_len = strlen(f_name);
+            if (f_name_len > extension_len) // ignore non vector files (too short name)
+            {
+                strncpy(extension, f_name + f_name_len - extension_len, extension_len);
+                if (strcmp(extension, VECTOR_FILE_EXTENSION) == 0)  // ignore files with wrong extension
+                {
+                    strncpy(f_name_no_extension, f_name, f_name_len - extension_len);
+                    add_vector_mutex(f_name_no_extension);
+                }
+            }
+        }
+    }
+    else
+        res = 0;
+
+    return res;
 }
 
 
