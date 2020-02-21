@@ -31,6 +31,8 @@
 // set value in vector
 #define SET_QUEUE_NAME "/set"
 #define SET_QUEUE_MAX_MESSAGES 10
+#define SET_SUCCESS 0
+#define SET_FAIL -1
 
 // errors
 #define QUEUE_OPEN_ERROR 13
@@ -51,6 +53,7 @@ struct set_msg {
     char name[MAX_VECTOR_NAME_LEN];
     int pos;
     int value;
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
 };
 
 #define SET_MSG_SIZE sizeof(struct set_msg)
@@ -58,6 +61,7 @@ struct set_msg {
 // storage
 #define VECTORS_FOLDER "vectors/"
 #define VECTOR_FILE_EXTENSION ".txt"
+#define TEMP_VECTOR_FILE_EXTENSION ".tmp"
 
 struct vector_mutex {
     char vector_name[MAX_VECTOR_NAME_LEN];
@@ -105,6 +109,7 @@ int close_queues();
 int create_vector(char* name, int size);
 int copy_message(char* p_source, char* p_destination, int size);
 void *init_vector(void* p_init_msg);
+void* set(void* p_set_msg);
 /* 
     starts a thread for reading user input
 */
@@ -163,6 +168,7 @@ int main (int argc, char **argv)
     {
         // messages
         struct init_msg in_init_msg;
+        struct set_msg in_set_msg;
 
         // listen for requests
         while (strcmp(user_input, EXIT_COMMAND) != 0)
@@ -175,6 +181,11 @@ int main (int argc, char **argv)
                 {
                     perror("REQUEST THREAD could not create thread for request");
                 }
+            }
+
+            if (mq_receive(q_set, (char*) &in_set_msg, SET_MSG_SIZE, NULL) != -1)
+            {
+                // TODO implement
             }
         }
     }
@@ -611,10 +622,11 @@ int initialize_array_file(FILE* fp, int size)
 int create_array_file(char* name, int size)
 {
     int res = 1;
+    pthread_mutex_t* p_vec_file_mutex = NULL;
 
     if (add_vector_mutex(name))
     {
-        pthread_mutex_t* p_vec_file_mutex = get_vector_mutex(name);
+        p_vec_file_mutex = get_vector_mutex(name);
         
         if (p_vec_file_mutex != NULL)
         {
@@ -648,6 +660,11 @@ int create_array_file(char* name, int size)
     }
     else // couldn't create vector mutex
         res = 0;
+
+    if (res = 0 && p_vec_file_mutex != NULL)
+    {
+        vector_remove(vector_mutexes, vector_size(vector_mutexes) - 1);
+    }
     
     return res;
 }
@@ -682,6 +699,124 @@ int initialize_set_queue()
     }
     
     return res;
+}
+
+
+
+int set_value_in_vector_file(char* vec_name, int pos, int val)
+{
+    int res = SET_SUCCESS;
+    int value_changed = 0;  // 1 if vaule is changed at pos
+
+    int max_full_vector_file_name_len = get_full_vector_file_name_max_len();
+    char full_vector_file_name[max_full_vector_file_name_len];
+    get_full_vector_file_name(full_vector_file_name, vec_name);
+
+    // name for temporal file with changed value, the same that original but *.tmp
+    char temp_file_name[max_full_vector_file_name_len];
+    strncpy(temp_file_name, 
+        full_vector_file_name, max_full_vector_file_name_len - sizeof(VECTOR_FILE_EXTENSION));
+    strcat(temp_file_name, TEMP_VECTOR_FILE_EXTENSION);
+
+    pthread_mutex_t* mutex_vec_file;
+    if ((mutex_vec_file = get_vector_mutex(vec_name)) != NULL) // obtain mutex for the vector file
+    {
+        if (pthread_mutex_lock(mutex_vec_file) == 0)    // lock mutex for the vector file
+        {
+            FILE* p_old, *p_new;
+
+            if ((p_old = fopen(full_vector_file_name, "r")) != NULL)    // open current vector file
+            {
+                if ((p_new = fopen(temp_file_name, "w")) != NULL)   // open temporal vector file
+                {
+                    char line[20];  // buffer for reading old file
+                    int line_idx = -1; // -1 because first line is size of vector
+                    while(fgets(line, 20, p_old) != NULL)
+                    {
+                        if (line_idx != pos)    // not specified position
+                        {
+                            if (fputs(line, p_new) < 0) // copy from old to new file
+                            {
+                                res = SET_FAIL;
+                                break;
+                            }
+                        }
+                        else // reached required position
+                        {
+                            if (fprintf(p_new, "%d\n", val) < 0)    // print new value
+                            {
+                                res = SET_FAIL;
+                                break;
+                            }
+                            else // value changed
+                                value_changed = 1;
+                        }
+                    }
+                    
+                    if (fclose(p_old) == 0 && fclose(p_new) == 0 && remove(full_vector_file_name) == 0)
+                    {
+                        if (rename(temp_file_name, full_vector_file_name) != 0)
+                            res = SET_FAIL;
+                    }
+                    else 
+                        res = SET_FAIL;
+                }
+                else // can't create temporary vector file
+                {
+                    res = SET_FAIL;  
+                    fclose(p_old);  // I don't check for success, function failed anyway
+                }  
+            }
+            else // can't open old vector file
+                res = SET_FAIL;            
+        }
+        else // can't lock mutex
+            res = SET_FAIL;
+    }
+    else // can't obtain mutex
+        res = SET_FAIL;
+
+    if (res = SET_SUCCESS && value_changed == 1)
+        return SET_SUCCESS;
+    else
+        return SET_FAIL;
+}
+
+
+
+void *set(void* p_set_msg)
+{
+    struct set_msg set_msg;
+    if (copy_message((char*) p_set_msg, (char*) &set_msg, SET_MSG_SIZE) == 1)
+    {
+        // set value in file
+        int response = set_value_in_vector_file(set_msg.name, set_msg.pos, set_msg.value);
+        
+        // send response
+        mqd_t q_resp;
+        if ((q_resp = mq_open(set_msg.resp_queue_name, O_WRONLY)) == -1)
+        {
+            perror("RESPONSE ERROR could not open queue for sending response");
+        }
+        else
+        {
+            if (mq_send(q_resp, (char*) &response, sizeof(int), 0) == -1)
+            {
+                perror("RESPONSE ERROR could not send response");
+            }
+
+            if (mq_close(q_resp) == -1)
+            {
+                perror ("RESPONSE QUEUE could not close response queue");
+            }
+        }
+    }
+    else
+    {
+        perror("SET couldn't copy_message");
+    }
+    
+    pthread_exit(0);
 }
 
 
