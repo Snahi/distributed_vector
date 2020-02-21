@@ -34,6 +34,20 @@ struct init_msg {
 
 #define INIT_MSG_SIZE sizeof(struct init_msg)
 
+// set
+#define SET_QUEUE_NAME "/set"
+#define SET_SUCCESS 0
+#define SET_FAIL -1
+
+struct set_msg {
+    char name[MAX_VECTOR_NAME_LEN];
+    int pos;
+    int value;
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+};
+
+#define SET_MSG_SIZE sizeof(struct set_msg)
+
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -48,7 +62,7 @@ int open_server_init_queue(mqd_t* p_queue);
 /*
     creates and opens unique queue for getting integer response from server
 */
-int open_resp_queue(char* que_name, mqd_t* p_queue);
+int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue);
 int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_q_server, 
     mqd_t* p_q_resp);
 
@@ -79,16 +93,22 @@ int init(char* name, int size)
             // queue for response from server
             mqd_t q_resp;
             char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
-            if (open_resp_queue(resp_que_name, &q_resp) == 1)
+            if (open_resp_queue("initvec", resp_que_name, &q_resp) == 1)
             {
                 result = create_vector_on_server(name, size, resp_que_name, &q_server_init, &q_resp);
 
                 // close and delete response queue
                 if (mq_close (q_resp) == -1)
+                {
                     perror ("Cannot close response queue");
+                    result = VECTOR_CREATION_ERROR;
+                }
 
                 if (mq_unlink(resp_que_name) == -1)
+                {
                     perror("Cannot unlink response queue");
+                    result = VECTOR_CREATION_ERROR;
+                }
             }
             else
             {
@@ -156,54 +176,6 @@ int is_name_valid(char* name)
 
 
 
-int open_resp_queue(char* que_name, mqd_t* p_queue)
-{
-    struct mq_attr attr;
-    attr.mq_flags = 0;
-    attr.mq_maxmsg = 1;
-    attr.mq_msgsize = sizeof(int);
-    attr.mq_curmsgs = 0;
-
-    char local_que_name[MAX_RESP_QUEUE_NAME_LEN];
-
-    // make queue name with PID, in single thread client it will be unique
-    snprintf(local_que_name, MAX_RESP_QUEUE_NAME_LEN, "/initvector%d", getpid());
-    // flags which assure that queue with such name doesn't exist
-    int flags = O_CREAT | O_EXCL | O_RDONLY;
-    // will be used to generate unique name in case it's needed
-    char* random_str = "1";
-    // if name is not unique, add random number to it. If there is no more space
-    // start from the beginning
-    while((*p_queue = mq_open(local_que_name, flags, S_IRUSR | S_IWUSR, &attr)) == -1)
-    {
-        if (errno == EEXIST)
-        {
-            // reached maximum name len, reset the name
-            if (strlen(local_que_name) == MAX_RESP_QUEUE_NAME_LEN - 1)
-            {
-                snprintf(local_que_name, MAX_RESP_QUEUE_NAME_LEN, "initvector%d", getpid());
-            }
-            else
-            {
-                // generate random number and convert it to string
-                snprintf(random_str, 2, "%d", rand() % 10);
-                // append generated number to the name
-                strcat(local_que_name, random_str);
-            }
-        }
-        else // error occurred (but not because of non unique name)
-        {
-            return 0;
-        }
-    }
-
-    strcpy(que_name, local_que_name);
-    
-    return 1;
-}
-
-
-
 int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_q_server, 
     mqd_t* p_q_resp)
 {
@@ -236,10 +208,168 @@ int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_
 
 
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// set
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int set_on_server(char* name, int pos, int val, char* resp_que_name, mqd_t* p_q_server, 
+    mqd_t* p_q_resp)
+{
+    int result = NEW_VECTOR_CREATED;
+
+    // create message
+    struct set_msg msg;
+    msg.pos = pos;
+    msg.value = val;
+    strcpy(msg.name, name);
+    strcpy(msg.resp_queue_name, resp_que_name);
+
+    // send message
+    if (mq_send(*p_q_server, (char*) &msg, SET_MSG_SIZE, 0) == -1)
+    {
+        perror("Cannot send init vector message to server");
+        result = VECTOR_CREATION_ERROR;
+    }
+    else // message send successfully
+    {
+        // wait for response
+        if (mq_receive(*p_q_resp, (char*) &result, sizeof(int), NULL) == -1)
+        {
+            perror("Cannot receive response message in init vector");
+            result = VECTOR_CREATION_ERROR;
+        }
+    }
+
+    return result;
+}
+
+
+
+int set(char* name, int pos, int val)
+{
+    int result = SET_SUCCESS;
+    // open queue to send init vector message to server
+    mqd_t q_server_set;
+
+    if ((q_server_set = mq_open(SET_QUEUE_NAME, O_WRONLY)) == -1)
+    {
+        perror("Cannot open set server queue from client perspective");
+        result = SET_FAIL;
+    }
+    else
+    {
+        // queue for response from server
+        mqd_t q_resp;
+        char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
+        if (open_resp_queue("setval", resp_que_name, &q_resp) == 1)
+        {
+            result = set_on_server(name, pos, val, resp_que_name, &q_server_set, &q_resp);
+
+            // close and delete response queue
+            if (mq_close (q_resp) == -1)
+            {
+                perror ("Cannot close response queue");
+                result = SET_FAIL;
+            }
+
+            if (mq_unlink(resp_que_name) == -1)
+            {
+                perror("Cannot unlink response queue");
+                result = SET_FAIL;
+            }
+        }
+        else // couldn't open response queue
+        {
+            perror("RESPONSE QUEUE couldn't open response queue");
+            result = SET_FAIL;
+        }
+
+        if (mq_close(q_server_set) == -1) 
+        {
+            perror("cannot close q_server_init queue");
+            result = SET_FAIL;
+        }
+    }
+
+    return result;
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// general
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue)
+{
+    struct mq_attr attr;
+    attr.mq_flags = 0;
+    attr.mq_maxmsg = 1;
+    attr.mq_msgsize = sizeof(int);
+    attr.mq_curmsgs = 0;
+
+    char local_que_name[MAX_RESP_QUEUE_NAME_LEN];
+
+    // make queue name with PID, in single thread client it will be unique
+    snprintf(local_que_name, MAX_RESP_QUEUE_NAME_LEN, "/%s%d", prefix, getpid());
+    // flags which assure that queue with such name doesn't exist
+    int flags = O_CREAT | O_EXCL | O_RDONLY;
+    // will be used to generate unique name in case it's needed
+    char* random_str = "1";
+    // if name is not unique, add random number to it. If there is no more space
+    // start from the beginning
+    while((*p_queue = mq_open(local_que_name, flags, S_IRUSR | S_IWUSR, &attr)) == -1)
+    {
+        if (errno == EEXIST)
+        {
+            // reached maximum name len, reset the name
+            if (strlen(local_que_name) == MAX_RESP_QUEUE_NAME_LEN - 1)
+            {
+                snprintf(local_que_name, MAX_RESP_QUEUE_NAME_LEN, "/%s%d", prefix, getpid());
+            }
+            else
+            {
+                // generate random number and convert it to string
+                snprintf(random_str, 2, "%d", rand() % 10);
+                // append generated number to the name
+                strcat(local_que_name, random_str);
+            }
+        }
+        else // error occurred (but not because of non unique name)
+        {
+            return 0;
+        }
+    }
+
+    strcpy(que_name, local_que_name);
+    
+    return 1;
+}
+
+
+
 int main (int argc, char **argv)
 {
-    int res = init("neg", 1);
-    printf("%d\n", res);
+    char name[] = "ajaja";
+
+    int res = init(name, 10);
+    printf("init res: %d\n", res);
+
+    res = set(name, -1, -1);
+    printf("fail: %d\n", res);
+
+    res = set(name, 10, -10);
+    printf("fail: %d\n", res);
+
+    res = set(name, 0, 1);
+    printf("success: %d\n", res);
+
+    res = set(name, 9, 10);
+    printf("success: %d\n", res);
 
     exit (0);
 }

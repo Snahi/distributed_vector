@@ -179,13 +179,16 @@ int main (int argc, char **argv)
                 // init queue
                 if (start_request_thread(init_vector, &in_init_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    perror("REQUEST THREAD could not create thread for request");
+                    perror("REQUEST THREAD could not create thread for init vector request");
                 }
             }
 
             if (mq_receive(q_set, (char*) &in_set_msg, SET_MSG_SIZE, NULL) != -1)
             {
-                // TODO implement
+                if (start_request_thread(set, &in_set_msg) != REQUEST_THREAD_CREATE_SUCCESS)
+                {
+                    perror("REQUEST THREAD could not create thread for set value request");
+                }
             }
         }
     }
@@ -528,7 +531,7 @@ int create_vector(char* name, int size)
         else
         {
             res = VECTOR_CREATION_ERROR;
-            perror("CREATE VECTOR could not create vector");
+            printf("CREATE VECTOR could not create vector\n");
         }
     }
     else if (old_vec_size == size)
@@ -624,13 +627,13 @@ int create_array_file(char* name, int size)
     int res = 1;
     pthread_mutex_t* p_vec_file_mutex = NULL;
 
-    if (add_vector_mutex(name))
+    if (add_vector_mutex(name)) // create mutex for new vector
     {
-        p_vec_file_mutex = get_vector_mutex(name);
+        p_vec_file_mutex = get_vector_mutex(name); // acquire newly created mutex
         
         if (p_vec_file_mutex != NULL)
         {
-            if (pthread_mutex_lock(p_vec_file_mutex) == 0)
+            if (pthread_mutex_lock(p_vec_file_mutex) == 0)  // lock access to vector file
             {
                 char file_name[get_full_vector_file_name_max_len()];
                 get_full_vector_file_name(file_name, name);
@@ -641,27 +644,48 @@ int create_array_file(char* name, int size)
                 if (fp != NULL)
                 {
                     if (!initialize_array_file(fp, size))
+                    {
                         res = 0;
+                        perror("CREATE ARRAY FILE could not initialize file");
+                    }
                     
                     if (fclose(fp) != 0)
+                    {
                         res = 0;
+                        perror("CREATE ARRAY FILE could not close file descriptor");
+                    }
 
-                    if (pthread_mutex_unlock(p_vec_file_mutex))
+                    if (pthread_mutex_unlock(p_vec_file_mutex) != 0)
+                    {
                         res = 0;
+                        perror("CREATE ARRAY FILE could not unlock mutex");
+                    }
                 }
                 else // NULL vector file pointer
+                {
                     res = 0;
+                    printf("CREATE ARRAY FILE null vector file pointer\n");
+                }
             }
             else // couldn't lock mutex
+            {
                 res = 0;
+                perror("CREATE ARRAY FILE could not lock mutex");
+            }
         }
         else // NULL vector mutex
+        {
             res = 0;
+            printf("CREATE ARRAY FILE null vector mutex\n");
+        }
     }
     else // couldn't create vector mutex
+    {
         res = 0;
+        perror("CREATE ARRAY FILE could not create vector mutex");
+    }
 
-    if (res = 0 && p_vec_file_mutex != NULL)
+    if (res == 0 && p_vec_file_mutex != NULL)
     {
         vector_remove(vector_mutexes, vector_size(vector_mutexes) - 1);
     }
@@ -705,19 +729,22 @@ int initialize_set_queue()
 
 int set_value_in_vector_file(char* vec_name, int pos, int val)
 {
+    if (pos < 0)
+        return SET_FAIL;
+
     int res = SET_SUCCESS;
     int value_changed = 0;  // 1 if vaule is changed at pos
 
     int max_full_vector_file_name_len = get_full_vector_file_name_max_len();
     char full_vector_file_name[max_full_vector_file_name_len];
     get_full_vector_file_name(full_vector_file_name, vec_name);
-
+    
     // name for temporal file with changed value, the same that original but *.tmp
     char temp_file_name[max_full_vector_file_name_len];
     strncpy(temp_file_name, 
-        full_vector_file_name, max_full_vector_file_name_len - sizeof(VECTOR_FILE_EXTENSION));
+        full_vector_file_name, strlen(full_vector_file_name) - strlen(VECTOR_FILE_EXTENSION));
     strcat(temp_file_name, TEMP_VECTOR_FILE_EXTENSION);
-
+    
     pthread_mutex_t* mutex_vec_file;
     if ((mutex_vec_file = get_vector_mutex(vec_name)) != NULL) // obtain mutex for the vector file
     {
@@ -751,15 +778,39 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
                             else // value changed
                                 value_changed = 1;
                         }
+
+                        line_idx++;
                     }
-                    
-                    if (fclose(p_old) == 0 && fclose(p_new) == 0 && remove(full_vector_file_name) == 0)
+
+                    if (fclose(p_old) == 0)
                     {
-                        if (rename(temp_file_name, full_vector_file_name) != 0)
+                        if (fclose(p_new) == 0)
+                        {
+                            if (remove(full_vector_file_name) == 0)
+                            {
+                                if (rename(temp_file_name, full_vector_file_name) != 0)
+                                {
+                                    res = SET_FAIL;
+                                    perror("SET_VALUE_IN_VECTOR_FILE could not rename new file");
+                                }
+                            }
+                            else // couldn't remove old file
+                            {
+                                res = SET_FAIL;
+                                perror("SET_VALUE_IN_VECTOR_FILE could not remove old file");
+                            }
+                        }
+                        else // couldn't close tmp file
+                        {
                             res = SET_FAIL;
+                            perror("SET_VALUE_IN_VECTOR_FILE could not close temp file");
+                        }
                     }
-                    else 
+                    else // couldn't close old file
+                    {
                         res = SET_FAIL;
+                        perror("SET_VALUE_IN_VECTOR_FILE could not close old file");
+                    }
                 }
                 else // can't create temporary vector file
                 {
@@ -768,7 +819,10 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
                 }  
             }
             else // can't open old vector file
-                res = SET_FAIL;            
+                res = SET_FAIL;   
+
+            if (pthread_mutex_unlock(mutex_vec_file) != 0)
+                res = SET_FAIL;      
         }
         else // can't lock mutex
             res = SET_FAIL;
@@ -776,7 +830,7 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
     else // can't obtain mutex
         res = SET_FAIL;
 
-    if (res = SET_SUCCESS && value_changed == 1)
+    if (res == SET_SUCCESS && value_changed == 1)
         return SET_SUCCESS;
     else
         return SET_FAIL;
