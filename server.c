@@ -71,6 +71,9 @@ int initialize_request_queues();
     creates mutex for every stored vector
 */
 int initialize_vector_mutexes();
+int destroy_vector_mutexes();
+int add_vector_mutex(char* vec_name);
+pthread_mutex_t* get_vector_mutex(char* vector_name);
 /*
     generic method for starting threads for requests. thread_function depends on queue from
     which server reads. Main thread waits till arguments are copied to new thread.
@@ -122,7 +125,7 @@ pthread_t user_input_thread;
 mqd_t q_init_vector;
 
 // storage
-struct vector_mutex* vector_mutexes;
+struct vector_mutex** vector_mutexes;
 
 
 
@@ -143,7 +146,7 @@ int main (int argc, char **argv)
     
     for (int i = 0; i < vector_size(vector_mutexes); i++)
     {
-        printf("vec mutex: |%s|\n", vector_mutexes[i].vector_name);
+        printf("vec mutex: |%s|\n", vector_mutexes[i]->vector_name);
     }
     if (start_reading_user_input() == 0)
     {
@@ -176,6 +179,9 @@ int main (int argc, char **argv)
         perror("CLEAN UP could not destroy conditional variable");
     if (pthread_attr_destroy(&request_thread_attr) != 0)
         perror("CLEAN UP could not destroy pthread attributes");
+
+    if (!destroy_vector_mutexes())
+        perror("CLEAN UP couldnt destroy vector files mutexes");
 
     // close queues
     if (mq_close(q_init_vector) != 0)
@@ -219,11 +225,17 @@ int initialize_request_queues()
 
 
 
-void add_vector_mutex(char* vec_name)
+int add_vector_mutex(char* vec_name)
 {
-    struct vector_mutex vec_mut;
-    strcpy(vec_mut.vector_name, vec_name);
-    vector_add(&vector_mutexes, vec_mut);
+    struct vector_mutex* p_vec_mut = (struct vector_mutex*) malloc(sizeof(struct vector_mutex));
+
+    strcpy(p_vec_mut->vector_name, vec_name);
+    vector_add(&vector_mutexes, p_vec_mut);
+    
+    if (pthread_mutex_init(&p_vec_mut->mutex, NULL) != 0)
+        return 0;
+
+    return 1;
 }
 
 
@@ -268,6 +280,36 @@ int initialize_vector_mutexes()
         res = 0;
 
     return res;
+}
+
+
+
+int destroy_vector_mutexes()
+{
+    int size = vector_size(vector_mutexes);
+    for (int i = 0; i < size; i++)
+    {
+        if (pthread_mutex_destroy(&vector_mutexes[i]->mutex) != 0)
+            perror("DESTROY VECTOR MUTEXES cannot destroy mutex");
+
+        free(vector_mutexes[i]);
+    }
+}
+
+
+
+pthread_mutex_t* get_vector_mutex(char* vector_name)
+{
+    int size = vector_size(vector_mutexes);
+    for (int i = 0; i < size; i++)
+    {
+        if (strcmp(vector_mutexes[i]->vector_name, vector_name) == 0)
+        {
+            return &vector_mutexes[i]->mutex;
+        }
+    }
+
+    return NULL;
 }
 
 
@@ -390,13 +432,13 @@ void *init_vector(void* p_init_msg)
         mqd_t q_resp;
         if ((q_resp = mq_open(init_msg.resp_queue_name, O_WRONLY)) == -1)
         {
-            perror("RESPONSE ERROR could not open queue for sending response to init vector");
+            perror("RESPONSE ERROR could not open queue for sending response");
         }
         else
         {
             if (mq_send(q_resp, (char*) &response, sizeof(int), 0) == -1)
             {
-                perror("RESPONSE ERROR could not send response to init vector");
+                perror("RESPONSE ERROR could not send response");
             }
 
             if (mq_close(q_resp) == -1)
@@ -427,7 +469,10 @@ int create_vector(char* name, int size)
         if (create_array_file(name, size))
             res = NEW_VECTOR_CREATED;
         else
+        {
             res = VECTOR_CREATION_ERROR;
+            perror("CREATE VECTOR could not create vector");
+        }
     }
     else if (old_vec_size == size)
         res = VECTOR_ALREADY_EXISTS;
@@ -450,7 +495,7 @@ void get_full_vector_file_name(char* file_name, char* vector_name)
 
 int get_full_vector_file_name_max_len()
 {
-    return MAX_VECTOR_NAME_LEN + strlen(VECTOR_FILE_EXTENSION) + 1;
+    return MAX_VECTOR_NAME_LEN + strlen(VECTOR_FILE_EXTENSION) + strlen(VECTORS_FOLDER) + 1;
 }
 
 
@@ -492,43 +537,71 @@ int get_vector_size(char* name)
 
 
 
-int create_array_file(char* name, int size)
+int initialize_array_file(FILE* fp, int size)
 {
     int res = 1;
 
-    char file_name[get_full_vector_file_name_max_len()];
-    get_full_vector_file_name(file_name, name);
-   
-    FILE* fp;
-    fp = fopen(file_name, "w");
-
-    if (fp != NULL)
+    if (fprintf(fp, "%d\n", size) > 0)
     {
-        if (fprintf(fp, "%d\n", size) > 0)
+        for (int i = 0; i < size; i++)
         {
-            for (int i = 0; i < size; i++)
+            if (fprintf(fp, "%d\n", 0) < 0)
             {
-                if (fprintf(fp, "%d\n", 0) < 0)
-                {
-                    res = 0;
-                    break;
-                }
+                res = 0;
+                break;
             }
-        }
-        else
-        {
-            res = 0;
-        }
-        
-        if (fclose(fp) != 0)
-        {
-            res = 0;
         }
     }
     else
     {
         res = 0;
     }
+
+    return res;
+}
+
+
+
+int create_array_file(char* name, int size)
+{
+    int res = 1;
+
+    if (add_vector_mutex(name))
+    {
+        pthread_mutex_t* p_vec_file_mutex = get_vector_mutex(name);
+        
+        if (p_vec_file_mutex != NULL)
+        {
+            if (pthread_mutex_lock(p_vec_file_mutex) == 0)
+            {
+                char file_name[get_full_vector_file_name_max_len()];
+                get_full_vector_file_name(file_name, name);
+            
+                FILE* fp;
+                fp = fopen(file_name, "w");
+
+                if (fp != NULL)
+                {
+                    if (!initialize_array_file(fp, size))
+                        res = 0;
+                    
+                    if (fclose(fp) != 0)
+                        res = 0;
+
+                    if (pthread_mutex_unlock(p_vec_file_mutex))
+                        res = 0;
+                }
+                else // NULL vector file pointer
+                    res = 0;
+            }
+            else // couldn't lock mutex
+                res = 0;
+        }
+        else // NULL vector mutex
+            res = 0;
+    }
+    else // couldn't create vector mutex
+        res = 0;
     
     return res;
 }
