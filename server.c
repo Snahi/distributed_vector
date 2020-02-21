@@ -23,6 +23,14 @@
 #define NEW_VECTOR_CREATED 1
 #define VECTOR_ALREADY_EXISTS 0
 #define VECTOR_CREATION_ERROR -1
+#define INIT_VECTOR_QUEUE_NAME "/init"
+#define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
+#define MAX_VECTOR_NAME_LEN 39
+#define MAX_RESP_QUEUE_NAME_LEN 64
+
+// set value in vector
+#define SET_QUEUE_NAME "/set"
+#define SET_QUEUE_MAX_MESSAGES 10
 
 // errors
 #define QUEUE_OPEN_ERROR 13
@@ -30,11 +38,6 @@
 #define REQUEST_THREAD_CREATE_SUCCESS 0
 #define REQUEST_THREAD_CREATE_FAIL -1
 
-// init
-#define INIT_VECTOR_QUEUE_NAME "/init"
-#define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
-#define MAX_VECTOR_NAME_LEN 39
-#define MAX_RESP_QUEUE_NAME_LEN 64
 
 struct init_msg {
     char name[MAX_VECTOR_NAME_LEN];
@@ -43,6 +46,14 @@ struct init_msg {
 };
 
 #define INIT_MSG_SIZE sizeof(struct init_msg)
+
+struct set_msg {
+    char name[MAX_VECTOR_NAME_LEN];
+    int pos;
+    int value;
+};
+
+#define SET_MSG_SIZE sizeof(struct set_msg)
 
 // storage
 #define VECTORS_FOLDER "vectors/"
@@ -86,6 +97,8 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args);
     QUEUE_OPEN_ERROR    if error occurred during opening the queue
 */
 int initialize_init_vector_queue();
+int initialize_set_queue();
+int close_queues();
 /*
     creat a vector physically
 */
@@ -123,6 +136,7 @@ pthread_t user_input_thread;
 
 // queue descriptors
 mqd_t q_init_vector;
+mqd_t q_set;
 
 // storage
 struct vector_mutex** vector_mutexes;
@@ -141,13 +155,10 @@ int main (int argc, char **argv)
 
     if (init() != 1)
     {
+        perror("INIT could not initialize server");
         exit(1);
     }
     
-    for (int i = 0; i < vector_size(vector_mutexes); i++)
-    {
-        printf("vec mutex: |%s|\n", vector_mutexes[i]->vector_name);
-    }
     if (start_reading_user_input() == 0)
     {
         // messages
@@ -183,11 +194,7 @@ int main (int argc, char **argv)
     if (!destroy_vector_mutexes())
         perror("CLEAN UP couldnt destroy vector files mutexes");
 
-    // close queues
-    if (mq_close(q_init_vector) != 0)
-        perror("CLEAN UP could not close inint vector queue");
-    if (mq_unlink(INIT_VECTOR_QUEUE_NAME) != 0)
-        perror("CLEAN UP could not unlink init vector queue");
+    close_queues();
 }
 
 
@@ -217,6 +224,12 @@ int initialize_request_queues()
     if (initialize_init_vector_queue() != QUEUE_INIT_SUCCESS)
     {
         perror("INIT ERROR: could not open init vector queue");
+        return 0;
+    }
+
+    if (initialize_set_queue() != QUEUE_INIT_SUCCESS)
+    {
+        perror("INIT ERROR: could not open set queue");
         return 0;
     }
 
@@ -310,6 +323,39 @@ pthread_mutex_t* get_vector_mutex(char* vector_name)
     }
 
     return NULL;
+}
+
+
+
+int close_queues()
+{
+    int res = 1;
+
+    // close init vector queue
+    if (mq_close(q_init_vector) != 0)
+    {
+        perror("CLEAN UP could not close inint vector queue");
+        res = 0;
+    }
+    if (mq_unlink(INIT_VECTOR_QUEUE_NAME) != 0)
+    {
+        perror("CLEAN UP could not unlink init vector queue");
+        res = 0;
+    }
+
+    // close set queue
+    if (mq_close(q_set) != 0)
+    {
+        perror("CLEAN UP could not close set queue");
+        res = 0;
+    }
+    if (mq_unlink(SET_QUEUE_NAME) != 0)
+    {
+        perror("CLEAN UP could not unlink set queue");
+        res = 0;
+    }
+
+    return res;
 }
 
 
@@ -602,6 +648,38 @@ int create_array_file(char* name, int size)
     }
     else // couldn't create vector mutex
         res = 0;
+    
+    return res;
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// set value in vector functions
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int initialize_set_queue()
+{
+    int res = QUEUE_INIT_SUCCESS;
+
+    struct mq_attr q_set_attr;
+    
+    q_set_attr.mq_flags = 0;                                // ingnored for MQ_OPEN
+    q_set_attr.mq_maxmsg = SET_QUEUE_MAX_MESSAGES;
+    q_set_attr.mq_msgsize = SET_MSG_SIZE;        
+    q_set_attr.mq_curmsgs = 0;                              // initially 0 messages
+
+    int open_flags = O_CREAT | O_RDONLY | O_NONBLOCK;
+    mode_t permissions = S_IRUSR | S_IWUSR;                 // allow reads and writes into queue
+
+    if ((
+        q_set = mq_open(SET_QUEUE_NAME, open_flags, permissions, 
+        &q_set_attr)) == -1)
+    {
+        res = QUEUE_OPEN_ERROR;
+    }
     
     return res;
 }
