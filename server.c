@@ -124,11 +124,11 @@ int init();
 */
 int initialize_request_queues();
 /*
-    creates mutex for every stored vector
+    creates mutex for every stored vector. 1 -> success, 0 -> fail
 */
 int initialize_vector_mutexes();
 /*
-    destroys all vector mutexes and frees memory after them
+    destroys all vector mutexes and frees memory after them. 1 -> success, 0 -> fail
 */
 int destroy_vector_mutexes();
 /*
@@ -142,7 +142,7 @@ int add_vector_mutex(char* vec_name);
 pthread_mutex_t* get_vector_mutex(char* vector_name);
 /*
     returns index of the mutex struct corresponding to the vector with name equal to vector_name
-    in the vector_mutexes list 
+    in the vector_mutexes list. Returns -1 if not found, index otherwise
 */
 int get_vector_mutex_idx(char* vector_name);
 /*
@@ -161,7 +161,8 @@ int initialize_set_queue();
 int initialize_get_queue();
 int initialize_destroy_queue();
 /*
-    closes and unlinks all the queues which were created for listening for requests
+    closes and unlinks all the queues which were created for listening for requests.
+    1 -> success, 0 -> fail
 */
 int close_queues();
 /*
@@ -274,7 +275,7 @@ int main (int argc, char **argv)
             {
                 if (start_request_thread(init_vector, &in_init_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    printf("REQUEST THREAD could not create thread for init vector request");
+                    printf("REQUEST THREAD could not create thread for init vector request\n");
                 }
             }
 
@@ -282,7 +283,7 @@ int main (int argc, char **argv)
             {
                 if (start_request_thread(set, &in_set_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    printf("REQUEST THREAD could not create thread for set value request");
+                    printf("REQUEST THREAD could not create thread for set value request\n");
                 }
             }
 
@@ -290,7 +291,7 @@ int main (int argc, char **argv)
             {
                 if (start_request_thread(get, &in_get_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    printf("REQUEST THREAD could not create thread for get value request");
+                    printf("REQUEST THREAD could not create thread for get value request\n");
                 }
             }
 
@@ -298,14 +299,14 @@ int main (int argc, char **argv)
             {
                 if (start_request_thread(destroy, &in_destroy_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    printf("REQUEST THREAD could not create thread for destroy request");
+                    printf("REQUEST THREAD could not create thread for destroy request\n");
                 }
             }
         } // end main while
     }
     else
     {
-        printf("USER INPUT READ could not start reading for user input");
+        printf("USER INPUT READ could not start reading for user input\n");
     }
 
     // clean up
@@ -317,10 +318,10 @@ int main (int argc, char **argv)
         perror("CLEAN UP could not destroy request_thread_attr");
 
     if (!destroy_vector_mutexes())
-        printf("CLEAN UP could not destroy vector files mutexes");
+        printf("CLEAN UP could not destroy vector files mutexes\n");
 
     if (!close_queues())
-        printf("CLEAN UP could not close queues");
+        printf("CLEAN UP could not close queues\n");
 }
 
 
@@ -353,13 +354,13 @@ int init()
 
     if (!initialize_vector_mutexes())
     {
-        printf("INIT coud not initialize vector mutexes");
+        printf("INIT coud not initialize vector mutexes\n");
         return 0;
     }
 
     if (!initialize_request_queues())
     {
-        printf("INIT could not initialize request queues");
+        printf("INIT could not initialize request queues\n");
         return 0;
     }
 
@@ -412,7 +413,7 @@ int add_vector_mutex(char* vec_name)
     
     if (pthread_mutex_init(&p_vec_mut->mutex, NULL) != 0)
     {
-        printf("ADD VECTOR MUTEX could not initialize vector mutex");
+        printf("ADD VECTOR MUTEX could not initialize vector mutex\n");
         return 0;
     }
 
@@ -461,7 +462,7 @@ int initialize_vector_mutexes()
                     if (!add_vector_mutex(f_name_no_extension))
                     {
                         res = 0;
-                        printf("INITIALIZE VECTOR MUTEXES could not add the mutex to the list");
+                        printf("INITIALIZE VECTOR MUTEXES could not add the mutex to the list\n");
                     }
                 }
             } // end if (f_name_len > extension_len)
@@ -476,7 +477,7 @@ int initialize_vector_mutexes()
     else // couldn't open the vector's directory
     {
         res = 0;
-        printf("INITIALIZE VECTOR MUTEXES could not open the vectors directory");
+        perror("INITIALIZE VECTOR MUTEXES could not open the vectors directory");
     }
 
     return res;
