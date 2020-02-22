@@ -5,7 +5,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <mqueue.h>
-#include <unistd.h>         // for unblock read function
+#include <unistd.h>
 #include <pthread.h>
 #include "vec.h"
 #include <dirent.h>
@@ -15,87 +15,98 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // const
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// user input
+// user input /////////////////////////////////////////////////////////////////////////////////////
 #define INITIAL_COMMAND "c"
 #define EXIT_COMMAND "q"
 
-// init vector
+// init vector ////////////////////////////////////////////////////////////////////////////////////
+#define INIT_VECTOR_QUEUE_NAME "/init"
 #define NEW_VECTOR_CREATED 1
 #define VECTOR_ALREADY_EXISTS 0
 #define VECTOR_CREATION_ERROR -1
-#define INIT_VECTOR_QUEUE_NAME "/init"
 #define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
-#define MAX_VECTOR_NAME_LEN 39
+#define MAX_VECTOR_NAME_LEN 40
 #define MAX_RESP_QUEUE_NAME_LEN 64
 
+// message sent to this server to create a new vector
 struct init_msg {
-    char name[MAX_VECTOR_NAME_LEN];
-    int size;
-    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+    char name[MAX_VECTOR_NAME_LEN];                 // new vector name
+    int size;                                       // size of the vector
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];  // queue to which a response will be sent
 };
 
 #define INIT_MSG_SIZE sizeof(struct init_msg)
 
-// set value in vector
+// set value in vector ////////////////////////////////////////////////////////////////////////////
 #define SET_QUEUE_NAME "/set"
 #define SET_QUEUE_MAX_MESSAGES 10
 #define SET_SUCCESS 0
 #define SET_FAIL -1
 
+// message sent to this server to set a value in a particular vector at a specific position
 struct set_msg {
-    char name[MAX_VECTOR_NAME_LEN];
-    int pos;
-    int value;
-    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+    char name[MAX_VECTOR_NAME_LEN];                 // name of the vector to be modified
+    int pos;                                        // index of the element to be modified
+    int value;                                      // value to be put on the specified position
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];  // queue to which a response will be sent
 };
 
 #define SET_MSG_SIZE sizeof(struct set_msg)
 
-// get value from vector
+// get value from vector //////////////////////////////////////////////////////////////////////////
 #define GET_QUEUE_NAME "/get"
 #define GET_QUEUE_MAX_MESSAGES 10
 #define GET_SUCCESS 0
 #define GET_FAIL -1
 
+// message sent to this server to get a value from a particualr vector from a specific position
 struct get_msg {
-    char name[MAX_VECTOR_NAME_LEN];
-    int pos;
-    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+    char name[MAX_VECTOR_NAME_LEN];                 // name of the vector
+    int pos;                                        // index of the requested element
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];  // queue to which a response will be sent
 };
 
 #define GET_MSG_SIZE sizeof(struct get_msg)
 
+// message sent by this server to a client sending get_msg 
 struct get_resp_msg {
-    int value;
-    int error;
+    int value;  // if no error then contains value from requested position
+    int error;  // 0 --> success; -1 --> fail
 };
 
 #define GET_RESP_MSG_SIZE sizeof(struct get_resp_msg)
 
-// destroy vector
+// destroy vector /////////////////////////////////////////////////////////////////////////////////
 #define DESTROY_QUEUE_NAME "/destroy"
 #define DESTROY_QUEUE_MAX_MESSAGES 10
 #define DESTROY_SUCCESS 1
 #define DESTROY_FAIL -1
 
+// message sent to this server to destroy a particular vector
 struct destroy_msg {
-    char name[MAX_VECTOR_NAME_LEN];
-    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+    char name[MAX_VECTOR_NAME_LEN];                 // name of the vector to be destroyed
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];  // queue to which a response will be sent
 };
 
 #define DESTROY_MSG_SIZE sizeof(struct destroy_msg)
 
-// errors
+// general errors errors //////////////////////////////////////////////////////////////////////////
 #define QUEUE_OPEN_ERROR 13
 #define QUEUE_INIT_SUCCESS 1
 #define REQUEST_THREAD_CREATE_SUCCESS 0
 #define REQUEST_THREAD_CREATE_FAIL -1
 
-// storage
+// storage ////////////////////////////////////////////////////////////////////////////////////////
 #define VECTORS_FOLDER "vectors/"
 #define VECTOR_FILE_EXTENSION ".txt"
 #define TEMP_VECTOR_FILE_EXTENSION ".tmp"
 
+/*
+    because this server is concurrent additional mechanisms must be applied to make sure, that
+    different threads do not interrupt each other during data access, i.e. one thread could delete
+    a vector while other thread reads. In order to prevent it each vector has it's own mutex 
+    assigned. This struct contains all required information to make it working.
+*/
 struct vector_mutex {
     char vector_name[MAX_VECTOR_NAME_LEN];
     pthread_mutex_t mutex;
@@ -104,24 +115,34 @@ struct vector_mutex {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // function declarations
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
 /* 
-    initializes server. 1 -> success
+    initializes server. 1 -> success, 0 -> fail
 */
 int init();
 /*
-    creates and opens queues to listen for requests. 1 -> success
+    creates and opens queues to listen for requests. 1 -> success, 0 -> fail
 */
 int initialize_request_queues();
 /*
     creates mutex for every stored vector
 */
 int initialize_vector_mutexes();
+/*
+    destroys all vector mutexes and frees memory after them
+*/
 int destroy_vector_mutexes();
+/*
+    creates and adds a new vector mutex to the vector_mutexes list
+*/
 int add_vector_mutex(char* vec_name);
+/*
+    returns a pointer to the mutex for the vector with name equal to vector_name
+*/
 pthread_mutex_t* get_vector_mutex(char* vector_name);
+/*
+    returns index of the mutex struct corresponding to the vector with name equal to vector_name
+    in the vector_mutexes list 
+*/
 int get_vector_mutex_idx(char* vector_name);
 /*
     generic method for starting threads for requests. thread_function depends on queue from
@@ -138,25 +159,56 @@ int initialize_init_vector_queue();
 int initialize_set_queue();
 int initialize_get_queue();
 int initialize_destroy_queue();
+/*
+    closes and unlinks all the queues which were created for listening for requests
+*/
 int close_queues();
 /*
-    creat a vector physically
+    creates a vector physically
 */
 int create_vector(char* name, int size);
+/*
+    copy message during new request thread creation. Is thread safe in sense that 
+    it will notify the main thread that the message has been copied and the main thread 
+    can proceed
+*/
 int copy_message(char* p_source, char* p_destination, int size);
+/*
+    performs logic for new vector initialization. Serves requests from the "init queue".
+    Used as the function passed to request thread
+*/
 void* init_vector(void* p_init_msg);
+/*
+    performs logic for setting a value in a vector. Serves requests from the "set queue".
+    Used as the function passed to request thread
+*/
 void* set(void* p_set_msg);
+/*
+    perfoms logic for getting a value form a vector. Servers requests from the "get queue".
+    Used as the function passed to request thread
+*/
 void* get(void* p_get_msg);
+/*
+    performs logic for destroying a vector. Serves requests from the "destroy queue".
+    Used as the function passed to request thread
+*/
 void* destroy(void* p_destroy_msg);
 /* 
-    starts a thread for reading user input
+    starts a thread for reading user input. User input is readed in order to detect when
+    server should stop so that all the clean up can be done
 */
 int start_reading_user_input();
 /*
     read user input and store it in user_input global variable
 */
 void *update_user_input(void*);
+/*
+    create a file for a vector and initialize it with 0 values
+*/
 int create_array_file(char* name, int size);
+/*
+    returns size of a vector which is saved in a vector file. Requeres opening a file
+*/
 int get_vector_size(char* name);
 
 
@@ -164,27 +216,28 @@ int get_vector_size(char* name);
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // global variables
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// general
-char user_input[] = INITIAL_COMMAND;  // for program end detection
+// general ////////////////////////////////////////////////////////////////////////////////////////
+char user_input[] = INITIAL_COMMAND;  // for main loop finish detection
 
-// request thread
+// request thread /////////////////////////////////////////////////////////////////////////////////
 pthread_mutex_t mutex_msg;  // mutex used for waiting unitil request thread copies a message
 int msg_not_copied = 1;     // flag used to check if a message has been copied by request thread
 pthread_cond_t cond_msg;    // condition used together with mutex_msg for waiting until request 
                             // thread copies message
 pthread_attr_t request_thread_attr;
 
-// user input
+// user input /////////////////////////////////////////////////////////////////////////////////////
 pthread_t user_input_thread;
 
-// queue descriptors
-mqd_t q_init_vector;
-mqd_t q_set;
-mqd_t q_get;
-mqd_t q_destroy;
+// queue descriptors //////////////////////////////////////////////////////////////////////////////
+mqd_t q_init_vector;    // queue for receiving requests to create a new vector
+mqd_t q_set;            // queue for receiving requests to set a value in a vector
+mqd_t q_get;            // queue for receiving requests to get a value from a vector
+mqd_t q_destroy;        // queue for receiving requests to remove a vector
 
-// storage
-struct vector_mutex** vector_mutexes;
+// storage ////////////////////////////////////////////////////////////////////////////////////////
+struct vector_mutex** vector_mutexes;   // for each vector stores structs which conitain (beside
+                                        // others) mutexes to access vector files
 
 
 
