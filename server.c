@@ -72,6 +72,13 @@ struct get_resp_msg {
 
 #define GET_RESP_MSG_SIZE sizeof(struct get_resp_msg)
 
+// destroy vector
+#define DESTROY_QUEUE_NAME "/destroy"
+#define DESTROY_QUEUE_MAX_MESSAGES 10
+#define DESTROY_SUCCESS 1
+#define DESTROY_FAIL -1
+#define DESTROY_MSG_SIZE MAX_VECTOR_NAME_LEN
+
 // errors
 #define QUEUE_OPEN_ERROR 13
 #define QUEUE_INIT_SUCCESS 1
@@ -123,6 +130,7 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args);
 int initialize_init_vector_queue();
 int initialize_set_queue();
 int initialize_get_queue();
+int initialize_destroy_queue();
 int close_queues();
 /*
     creat a vector physically
@@ -165,6 +173,7 @@ pthread_t user_input_thread;
 mqd_t q_init_vector;
 mqd_t q_set;
 mqd_t q_get;
+mqd_t q_destroy;
 
 // storage
 struct vector_mutex** vector_mutexes;
@@ -282,6 +291,12 @@ int initialize_request_queues()
     if (initialize_get_queue() != QUEUE_INIT_SUCCESS)
     {
         perror("INIT ERROR: could not open get queue");
+        return 0;
+    }
+
+    if (initialize_destroy_queue() != QUEUE_INIT_SUCCESS)
+    {
+        perror("INIT ERROR: could not open destroy queue");
         return 0;
     }
 
@@ -416,6 +431,18 @@ int close_queues()
     if (mq_unlink(GET_QUEUE_NAME) != 0)
     {
         perror("CLEAN UP could not unlink get queue");
+        res = 0;
+    }
+
+    // close destroy queue
+    if (mq_close(q_destroy) != 0)
+    {
+        perror("CLEAN UP could not close destroy queue");
+        res = 0;
+    }
+    if (mq_unlink(DESTROY_QUEUE_NAME) != 0)
+    {
+        perror("CLEAN UP could not unlink destroy queue");
         res = 0;
     }
 
@@ -1068,6 +1095,38 @@ void* get(void* p_get_msg)
     }
     
     pthread_exit(0);
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// destroy
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int initialize_destroy_queue()
+{
+    int res = QUEUE_INIT_SUCCESS;
+
+    struct mq_attr q_destroy_attr;
+    
+    q_destroy_attr.mq_flags = 0;                                // ingnored for MQ_OPEN
+    q_destroy_attr.mq_maxmsg = DESTROY_QUEUE_MAX_MESSAGES;
+    q_destroy_attr.mq_msgsize = DESTROY_MSG_SIZE;        
+    q_destroy_attr.mq_curmsgs = 0;                              // initially 0 messages
+
+    int open_flags = O_CREAT | O_RDONLY | O_NONBLOCK;
+    mode_t permissions = S_IRUSR | S_IWUSR;                 // allow reads and writes into queue
+
+    if ((
+        q_destroy = mq_open(DESTROY_QUEUE_NAME, open_flags, permissions, 
+        &q_destroy_attr)) == -1)
+    {
+        res = QUEUE_OPEN_ERROR;
+    }
+    
+    return res;
 }
 
 
