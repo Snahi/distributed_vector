@@ -77,7 +77,13 @@ struct get_resp_msg {
 #define DESTROY_QUEUE_MAX_MESSAGES 10
 #define DESTROY_SUCCESS 1
 #define DESTROY_FAIL -1
-#define DESTROY_MSG_SIZE MAX_VECTOR_NAME_LEN
+
+struct destroy_msg {
+    char name[MAX_VECTOR_NAME_LEN];
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+};
+
+#define DESTROY_MSG_SIZE sizeof(struct destroy_msg)
 
 // errors
 #define QUEUE_OPEN_ERROR 13
@@ -116,6 +122,7 @@ int initialize_vector_mutexes();
 int destroy_vector_mutexes();
 int add_vector_mutex(char* vec_name);
 pthread_mutex_t* get_vector_mutex(char* vector_name);
+int get_vector_mutex_idx(char* vector_name);
 /*
     generic method for starting threads for requests. thread_function depends on queue from
     which server reads. Main thread waits till arguments are copied to new thread.
@@ -137,9 +144,10 @@ int close_queues();
 */
 int create_vector(char* name, int size);
 int copy_message(char* p_source, char* p_destination, int size);
-void *init_vector(void* p_init_msg);
+void* init_vector(void* p_init_msg);
 void* set(void* p_set_msg);
 void* get(void* p_get_msg);
+void* destroy(void* p_destroy_msg);
 /* 
     starts a thread for reading user input
 */
@@ -195,13 +203,17 @@ int main (int argc, char **argv)
         perror("INIT could not initialize server");
         exit(1);
     }
-    
+    for (int i = 0; i < vector_size(vector_mutexes); i++)
+    {
+        printf("mutex: %s\n", vector_mutexes[i]->vector_name);
+    }
     if (start_reading_user_input() == 0)
     {
         // messages
         struct init_msg in_init_msg;
         struct set_msg in_set_msg;
         struct get_msg in_get_msg;
+        struct destroy_msg in_destroy_msg;
 
         // listen for requests
         while (strcmp(user_input, EXIT_COMMAND) != 0)
@@ -231,7 +243,15 @@ int main (int argc, char **argv)
                     perror("REQUEST THREAD could not create thread for get value request");
                 }
             }
-        }
+
+            if (mq_receive(q_destroy, (char*) &in_destroy_msg, DESTROY_MSG_SIZE, NULL) != -1)
+            {
+                if (start_request_thread(destroy, &in_destroy_msg) != REQUEST_THREAD_CREATE_SUCCESS)
+                {
+                    perror("REQUEST THREAD could not create thread for destroy request");
+                }
+            }
+        } // end main while
     }
     else
     {
@@ -337,6 +357,7 @@ int initialize_vector_mutexes()
         char f_name[MAX_VECTOR_NAME_LEN + extension_len + 1];
         int f_name_len = 0;
         char f_name_no_extension[MAX_VECTOR_NAME_LEN];
+        int f_name_no_extension_len = 0;
 
         while ((vec_dir_ent = readdir(vec_dir)) != NULL)
         {
@@ -345,9 +366,13 @@ int initialize_vector_mutexes()
             if (f_name_len > extension_len) // ignore non vector files (too short name)
             {
                 strncpy(extension, f_name + f_name_len - extension_len, extension_len);
+                
                 if (strcmp(extension, VECTOR_FILE_EXTENSION) == 0)  // ignore files with wrong extension
                 {
-                    strncpy(f_name_no_extension, f_name, f_name_len - extension_len);
+                    f_name_no_extension_len = f_name_len - extension_len;
+                    strncpy(f_name_no_extension, f_name, f_name_no_extension_len);
+                    f_name_no_extension[f_name_no_extension_len] = '\0';
+                    printf("%s %d %s %d %s\n", f_name, f_name_len, extension, extension_len, f_name_no_extension);
                     add_vector_mutex(f_name_no_extension);
                 }
             }
@@ -366,14 +391,26 @@ int initialize_vector_mutexes()
 
 int destroy_vector_mutexes()
 {
+    int res = 1;
+
     int size = vector_size(vector_mutexes);
     for (int i = 0; i < size; i++)
     {
         if (pthread_mutex_destroy(&vector_mutexes[i]->mutex) != 0)
+        {
             perror("DESTROY VECTOR MUTEXES cannot destroy mutex");
+            printf("the mutex which could not be destroyed is for vector: %s\n", 
+                vector_mutexes[i]->vector_name);
+            
+            res = 0;
+        }
 
         free(vector_mutexes[i]);
     }
+
+    vector_free(vector_mutexes);
+
+    return res;
 }
 
 
@@ -390,6 +427,22 @@ pthread_mutex_t* get_vector_mutex(char* vector_name)
     }
 
     return NULL;
+}
+
+
+
+int get_vector_mutex_idx(char* vector_name)
+{
+    int size = vector_size(vector_mutexes);
+    for (int i = 0; i < size; i++)
+    {
+        if (strcmp(vector_mutexes[i]->vector_name, vector_name) == 0)
+        {
+            return i;
+        }
+    }
+
+    return -1;
 }
 
 
@@ -1039,7 +1092,7 @@ int get_value_from_vector_file(char* vec_name, int pos, int* p_value)
             if (pthread_mutex_unlock(p_mutex_vec) != 0)
             {
                 res = 0;
-                perror("GET VALUE FROM VECTOR FILE could not close file");
+                perror("GET VALUE FROM VECTOR FILE could not unlock mutex");
             }
         }
         else // couldn't lock mutex
@@ -1127,6 +1180,71 @@ int initialize_destroy_queue()
     }
     
     return res;
+}
+
+
+
+void* destroy(void* p_destroy_msg)
+{
+    struct destroy_msg destroy_msg;
+    if (copy_message((char*) p_destroy_msg, (char*) &destroy_msg, DESTROY_MSG_SIZE) == 1)
+    {
+        int result = DESTROY_SUCCESS;
+        
+        pthread_mutex_t* p_mutex_vec;
+        
+        if ((p_mutex_vec = get_vector_mutex(destroy_msg.name)) != NULL)
+        {
+            char full_vector_file_name[get_full_vector_file_name_max_len()];
+            get_full_vector_file_name(full_vector_file_name, destroy_msg.name);
+            
+            if (pthread_mutex_lock(p_mutex_vec) == 0)
+            {
+                if (remove(full_vector_file_name) != 0) // if couldn't remove the file
+                    result = DESTROY_FAIL;
+
+                if (pthread_mutex_unlock(p_mutex_vec) != 0)
+                {
+                    perror("DESTROY could not unlock mutex");
+                }
+            }
+            else // couldn't lock mutex
+            {
+                result = DESTROY_FAIL;
+                perror("DESTROY could not lock mutex");
+            }
+        }
+        else // vector doesn't exist
+        {
+            result = DESTROY_FAIL;
+            printf("DESTROY mutex for specified vector does not exist");
+        }
+        
+        // send response
+        mqd_t q_resp;
+        if ((q_resp = mq_open(destroy_msg.resp_queue_name, O_WRONLY)) == -1)
+        {
+            perror("RESPONSE ERROR could not open queue for sending response");
+        }
+        else
+        {
+            if (mq_send(q_resp, (char*) &result, sizeof(int), 0) == -1)
+            {
+                perror("RESPONSE ERROR could not send response");
+            }
+
+            if (mq_close(q_resp) == -1)
+            {
+                perror ("RESPONSE QUEUE could not close response queue");
+            }
+        }
+    }
+    else
+    {
+        perror("DESTROY couldn't copy_message");
+    }
+    
+    pthread_exit(0);
 }
 
 

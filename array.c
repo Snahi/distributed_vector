@@ -68,6 +68,18 @@ struct get_resp_msg {
 
 #define GET_RESP_MSG_SIZE sizeof(struct get_resp_msg)
 
+// destroy
+#define DESTROY_QUEUE_NAME "/destroy"
+#define DESTROY_SUCCESS 1
+#define DESTROY_FAIL -1
+
+struct destroy_msg {
+    char name[MAX_VECTOR_NAME_LEN];
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+};
+
+#define DESTROY_MSG_SIZE sizeof(struct destroy_msg)
+
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -415,6 +427,93 @@ int get(char* name, int pos, int* value)
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+// destroy
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int destroy_on_server(char* name, char* resp_que_name, mqd_t* p_q_server, mqd_t* p_q_resp)
+{
+    int result = DESTROY_SUCCESS;
+
+    // create message
+    struct destroy_msg msg;
+    strcpy(msg.name, name);
+    strcpy(msg.resp_queue_name, resp_que_name);
+    
+    // send message
+    if (mq_send(*p_q_server, (char*) &msg, DESTROY_MSG_SIZE, 0) == -1)
+    {
+        perror("Cannot send destroy message to server");
+        result = GET_FAIL;
+    }
+    else // message send successfully
+    {
+        // wait for response
+        if (mq_receive(*p_q_resp, (char*) &result, sizeof(int), NULL) == -1)
+        {
+            perror("Cannot receive response message in destroy vector");
+            result = SET_FAIL;
+        }
+    }
+
+    return result;
+}
+
+
+
+int destroy(char* vec_name)
+{
+    int result = DESTROY_SUCCESS;
+    // open queue to send destroy message to server
+    mqd_t q_server_destroy;
+
+    if ((q_server_destroy = mq_open(DESTROY_QUEUE_NAME, O_WRONLY)) == -1)
+    {
+        perror("Cannot open destroy server queue from client perspective");
+        result = DESTROY_FAIL;
+    }
+    else
+    {
+        // queue for response from server
+        mqd_t q_resp;
+        char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
+        if (open_resp_queue("destroy", resp_que_name, &q_resp, sizeof(int)) == 1)
+        {
+            result = destroy_on_server(vec_name, resp_que_name, &q_server_destroy, &q_resp);
+
+            // close and delete response queue
+            if (mq_close(q_resp) == -1)
+            {
+                perror ("Cannot close response queue");
+                result = SET_FAIL;
+            }
+
+            if (mq_unlink(resp_que_name) == -1)
+            {
+                perror("Cannot unlink response queue");
+                result = SET_FAIL;
+            }
+        }
+        else // couldn't open response queue
+        {
+            perror("RESPONSE QUEUE couldn't open response queue");
+            result = SET_FAIL;
+        }
+
+        if (mq_close(q_server_destroy) == -1) 
+        {
+            perror("cannot close q_server_init queue");
+            result = SET_FAIL;
+        }
+    }
+
+    return result;
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // general
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -470,26 +569,34 @@ int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue, size_t msg_siz
 
 int main (int argc, char **argv)
 {
-    char name[] = "ajaja";
+    for (int i = 0; i < 20; i++)
+    {
+        char name[7];
+        sprintf(name, "v%d", i);
 
-    int res = init(name, 10);
-    printf("init res: %d\n", res);
+        int res = init(name, 12);
+        printf("init res: %d\n", res);
 
-    res = set(name, -1, -1);
-    printf("fail: %d\n", res);
+        res = set(name, -1, -1);
+        printf("fail: %d\n", res);
 
-    res = set(name, 10, -10);
-    printf("fail: %d\n", res);
+        res = set(name, 10, -10);
+        printf("fail: %d\n", res);
 
-    res = set(name, 0, 1);
-    printf("success: %d\n", res);
+        res = set(name, 0, 1);
+        printf("success: %d\n", res);
 
-    res = set(name, 9, 10);
-    printf("success: %d\n", res);
+        res = set(name, 9, 10);
+        printf("success: %d\n", res);
+    }
 
-    int val = -1;
-    res = get(name, -1, &val);
-    printf("get result (success): %d, expected value 10 : %d\n", res, val);
+    // int val = -1;
+    // res = get(name, -1, &val);
+    // printf("get result (success): %d, expected value 10 : %d\n", res, val);
+
+    // int res = 100;
+    // res = destroy("v0");
+    // printf("destroy result: %d\n", res);
 
     exit (0);
 }
