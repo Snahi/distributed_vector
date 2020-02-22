@@ -148,6 +148,7 @@ int get_vector_mutex_idx(char* vector_name);
 /*
     generic method for starting threads for requests. thread_function depends on queue from
     which server reads. Main thread waits till arguments are copied to new thread.
+    REQUEST_THREAD_CREATION_SUCCESS -> success, REQUEST_THREAD_CREATION_FAIL -> fail
 */
 int start_request_thread(void* (*thread_function)(void*), void* p_args);
 /*
@@ -612,6 +613,7 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args)
     pthread_t th_id;
     if (pthread_create(&th_id, &request_thread_attr, thread_function, p_args) != 0)
     {
+        perror("START REQUEST THREAD could not create the thread");
         res = REQUEST_THREAD_CREATE_FAIL;
     }
     else // thread created
@@ -623,6 +625,7 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args)
             {
                 if (pthread_cond_wait(&cond_msg, &mutex_msg) != 0)
                 {
+                    perror("START REQUEST THREAD could not wait for the condition");
                     res = REQUEST_THREAD_CREATE_FAIL;
                     break;
                 }
@@ -630,14 +633,15 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args)
             msg_not_copied = 1; // thread changed it to 0 after copying message, change it to initial state
             if (pthread_mutex_unlock(&mutex_msg) != 0)
             {
+                perror("START REQUEST THREAD could not unlock the mutex_msg");
                 res = REQUEST_THREAD_CREATE_FAIL;
             }
         }
         else // couldn't lock mutex
         {
+            perror("START REQUEST THREAD could not lock the mutex_msg");
             res = REQUEST_THREAD_CREATE_FAIL;
         }
-        
     }
 
     return res;
@@ -656,16 +660,19 @@ int copy_message(char* p_source, char* p_destination, int size)
         {
             if (pthread_mutex_unlock(&mutex_msg) != 0)
             {
+                perror("COPY MESSAGE could not unlock the mutex_msg");
                 res = 0;
             }
         }
         else
         {
+            perror("COPY MESSAGE could not signal");
             res = 0;
         }               
     }     
-    else
+    else // couldn't lock mutex
     {
+        perror("COPY MESSAGE could not lock the mutex_msg");
         res = 0;
     }
 
@@ -698,6 +705,7 @@ int initialize_init_vector_queue()
         q_init_vector = mq_open(INIT_VECTOR_QUEUE_NAME, open_flags, permissions, 
         &q_init_vector_attr)) == -1)
     {
+        perror("INITIALIZE INIT VECTOR QUEEU could not open the queue");
         res = QUEUE_OPEN_ERROR;
     }
     
@@ -735,9 +743,8 @@ void *init_vector(void* p_init_msg)
     }
     else
     {
-        perror("INIT VECTOR couldn't copy_message");
+        printf("INIT VECTOR couldn't copy message\n");
     }
-    
     
     pthread_exit(0);
 }
@@ -801,7 +808,11 @@ int get_vector_size(char* name)
         char len_str[20];
         if (fgets(len_str, 20, fp) != NULL)
         {
-            sscanf(len_str, "%d", &len);
+            if (sscanf(len_str, "%d", &len) != 1)
+            {
+                printf("GET VECTOR SIZE vector file wrong format");
+                len = -1;
+            }
         }
         else
         {
@@ -872,7 +883,7 @@ int create_array_file(char* name, int size)
                     if (!initialize_array_file(fp, size))
                     {
                         res = 0;
-                        perror("CREATE ARRAY FILE could not initialize file");
+                        printf("CREATE ARRAY FILE could not initialize file\n");
                     }
                     
                     if (fclose(fp) != 0)
@@ -908,9 +919,10 @@ int create_array_file(char* name, int size)
     else // couldn't create vector mutex
     {
         res = 0;
-        perror("CREATE ARRAY FILE could not create vector mutex");
+        printf("CREATE ARRAY FILE could not create vector mutex\n");
     }
 
+    // in case mutex was created but some other errors occurred remove the mutex
     if (res == 0 && p_vec_file_mutex != NULL)
     {
         vector_remove(vector_mutexes, vector_size(vector_mutexes) - 1);
@@ -945,6 +957,7 @@ int initialize_set_queue()
         q_set = mq_open(SET_QUEUE_NAME, open_flags, permissions, 
         &q_set_attr)) == -1)
     {
+        perror("INITIALIZE SET QUEUE could not open the queue");
         res = QUEUE_OPEN_ERROR;
     }
     
@@ -980,16 +993,17 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
 
             if ((p_old = fopen(full_vector_file_name, "r")) != NULL)    // open current vector file
             {
-                if ((p_new = fopen(temp_file_name, "w")) != NULL)   // open temporal vector file
+                if ((p_new = fopen(temp_file_name, "w")) != NULL)       // open temporal vector file
                 {
-                    char line[20];  // buffer for reading old file
-                    int line_idx = -1; // -1 because first line is size of vector
+                    char line[20];      // buffer for reading old file
+                    int line_idx = -1;  // -1 because first line is size of vector
                     while(fgets(line, 20, p_old) != NULL)
                     {
-                        if (line_idx != pos)    // not specified position
+                        if (line_idx != pos) // not specified position
                         {
                             if (fputs(line, p_new) < 0) // copy from old to new file
                             {
+                                perror("SET VALUE IN VECTOR FILE could not wirte into temp file");
                                 res = SET_FAIL;
                                 break;
                             }
@@ -998,6 +1012,7 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
                         {
                             if (fprintf(p_new, "%d\n", val) < 0)    // print new value
                             {
+                                perror("SET VALUE IN VECTOR FILE could not wirte wanted number into temp file");
                                 res = SET_FAIL;
                                 break;
                             }
@@ -1041,20 +1056,31 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
                 else // can't create temporary vector file
                 {
                     res = SET_FAIL;  
-                    fclose(p_old);  // I don't check for success, function failed anyway
+                    perror("SET VALUE IN VECTOR FILE could not create temporal file");
+                    if (fclose(p_old) != 0)
+                        perror("SET VALUE IN VECTOR FILE could not close vector file after creating temporal file failed");
                 }  
             }
             else // can't open old vector file
+            {
                 res = SET_FAIL;   
+                perror("SET VALUE IN VECTOR FILE could not open the vector file");
+            }
 
             if (pthread_mutex_unlock(mutex_vec_file) != 0)
                 res = SET_FAIL;      
         }
         else // can't lock mutex
+        {
             res = SET_FAIL;
+            perror("SET VALUE IN VECTOR FILE could not lock the mutex");
+        }
     }
     else // can't obtain mutex
+    {
         res = SET_FAIL;
+        printf("SET VALUE IN VECTOR FILE could not obtain mutex\n");
+    }
 
     if (res == SET_SUCCESS && value_changed == 1)
         return SET_SUCCESS;
@@ -1093,7 +1119,7 @@ void *set(void* p_set_msg)
     }
     else
     {
-        perror("SET couldn't copy_message");
+        printf("SET couldn't copy_message\n");
     }
     
     pthread_exit(0);
@@ -1125,6 +1151,7 @@ int initialize_get_queue()
         q_get = mq_open(GET_QUEUE_NAME, open_flags, permissions, 
         &q_get_attr)) == -1)
     {
+        perror("INITIALIZE GET QUEUE could not open the queue");
         res = QUEUE_OPEN_ERROR;
     }
     
@@ -1154,14 +1181,14 @@ int get_value_from_vector_file(char* vec_name, int pos, int* p_value)
 
             if ((fp = fopen(full_vector_file_name, "r")) != NULL) // open the vector file
             {
-                char line[20];  // temp varible for reading lines from vector file
+                char line[20];      // temp varible for reading lines from vector file
                 int line_idx = -1;  // -1 because line 0 is size of vector
                 while (fgets(line, 20, fp) != NULL)
                 {
                     if (line_idx == pos)
                     {
                         found = 1;
-                        if (sscanf(line, "%d", p_value) <= 0)
+                        if (sscanf(line, "%d", p_value) != 1)
                         {
                             perror("GET VALUE FROM VECTOR FILE could not match value to integer");
                             res = 0;
@@ -1198,7 +1225,10 @@ int get_value_from_vector_file(char* vec_name, int pos, int* p_value)
         }  
     }
     else // vector doesn't exist
+    {
         res = 0;
+        printf("GET VALUE FROM VECTOR FILE could not obtain vector file mutex\n");
+    }
 
     return res && found;
 }
@@ -1240,7 +1270,7 @@ void* get(void* p_get_msg)
     }
     else
     {
-        perror("SET couldn't copy_message");
+        printf("GET couldn't copy_message\n");
     }
     
     pthread_exit(0);
@@ -1272,6 +1302,7 @@ int initialize_destroy_queue()
         q_destroy = mq_open(DESTROY_QUEUE_NAME, open_flags, permissions, 
         &q_destroy_attr)) == -1)
     {
+        perror("INITIALIZE DESTROY QUEUE could not open the queue");
         res = QUEUE_OPEN_ERROR;
     }
     
@@ -1297,23 +1328,26 @@ void* destroy(void* p_destroy_msg)
             if (pthread_mutex_lock(p_mutex_vec) == 0)
             {
                 if (remove(full_vector_file_name) != 0) // if couldn't remove the file
+                {
+                    perror("DESTROY could not remove the vector file");
                     result = DESTROY_FAIL;
+                }
 
                 if (pthread_mutex_unlock(p_mutex_vec) != 0)
                 {
-                    perror("DESTROY could not unlock mutex");
+                    perror("DESTROY could not unlock the mutex");
                 }
             }
             else // couldn't lock mutex
             {
                 result = DESTROY_FAIL;
-                perror("DESTROY could not lock mutex");
+                perror("DESTROY could not lock the mutex");
             }
         }
         else // vector doesn't exist
         {
             result = DESTROY_FAIL;
-            printf("DESTROY mutex for specified vector does not exist");
+            printf("DESTROY mutex for specified vector does not exist\n");
         }
         
         // send response
@@ -1337,7 +1371,7 @@ void* destroy(void* p_destroy_msg)
     }
     else
     {
-        perror("DESTROY couldn't copy_message");
+        printf("DESTROY couldn't copy_message\n");
     }
     
     pthread_exit(0);

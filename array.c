@@ -20,7 +20,7 @@
 // init
 #define INIT_VECTOR_QUEUE_NAME "/init"
 #define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
-#define MAX_VECTOR_NAME_LEN 39
+#define MAX_VECTOR_NAME_LEN 40
 #define MAX_RESP_QUEUE_NAME_LEN 64
 #define NEW_VECTOR_CREATED 1
 #define VECTOR_ALREADY_EXISTS 0
@@ -569,34 +569,34 @@ int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue, size_t msg_siz
 
 int main (int argc, char **argv)
 {
-    for (int i = 0; i < 20; i++)
-    {
-        char name[7];
-        sprintf(name, "v%d", i);
+    // for (int i = 0; i < 20; i++)
+    // {
+    //     char name[7];
+    //     sprintf(name, "v%d", i);
 
-        int res = init(name, 12);
-        printf("init res: %d\n", res);
+    //     int res = init(name, 12);
+    //     printf("init res: %d\n", res);
 
-        res = set(name, -1, -1);
-        printf("fail: %d\n", res);
+    //     res = set(name, -1, -1);
+    //     printf("fail: %d\n", res);
 
-        res = set(name, 10, -10);
-        printf("fail: %d\n", res);
+    //     res = set(name, 10, -10);
+    //     printf("fail: %d\n", res);
 
-        res = set(name, 0, 1);
-        printf("success: %d\n", res);
+    //     res = set(name, 0, 1);
+    //     printf("success: %d\n", res);
 
-        res = set(name, 9, 10);
-        printf("success: %d\n", res);
-    }
+    //     res = set(name, 9, 10);
+    //     printf("success: %d\n", res);
+    // }
 
     // int val = -1;
     // res = get(name, -1, &val);
     // printf("get result (success): %d, expected value 10 : %d\n", res, val);
 
-    // int res = 100;
-    // res = destroy("v0");
-    // printf("destroy result: %d\n", res);
+    int res = 100;
+    res = destroy("v5");
+    printf("destroy result: %d\n", res);
 
     exit (0);
 }
