@@ -304,21 +304,22 @@ int main (int argc, char **argv)
     }
     else
     {
-        perror("USER INPUT READ could not start reading for user input");
+        printf("USER INPUT READ could not start reading for user input");
     }
 
     // clean up
     if (pthread_mutex_destroy(&mutex_msg) != 0)
-        perror("CLEAN UP could not destroy mutex");
+        perror("CLEAN UP could not destroy mutex_msg");
     if (pthread_cond_destroy(&cond_msg) != 0)
-        perror("CLEAN UP could not destroy conditional variable");
+        perror("CLEAN UP could not destroy cond_msg");
     if (pthread_attr_destroy(&request_thread_attr) != 0)
-        perror("CLEAN UP could not destroy pthread attributes");
+        perror("CLEAN UP could not destroy request_thread_attr");
 
     if (!destroy_vector_mutexes())
-        perror("CLEAN UP couldnt destroy vector files mutexes");
+        printf("CLEAN UP could not destroy vector files mutexes");
 
-    close_queues();
+    if (!close_queues())
+        printf("CLEAN UP could not close queues");
 }
 
 
@@ -326,18 +327,42 @@ int main (int argc, char **argv)
 int init()
 {
     if (pthread_mutex_init(&mutex_msg, NULL) != 0)
+    {
         return 0;
+        perror("INIT could not init mutex_msg");
+    }
+
     if (pthread_cond_init(&cond_msg, NULL) != 0)
+    {
         return 0;
+        perror("INIT could not init cond_msg");
+    }
+
     if (pthread_attr_init(&request_thread_attr) != 0)
+    {
         return 0;
+        perror("INIT could not init request_thread_attr");
+    }
+
     if (pthread_attr_setdetachstate(&request_thread_attr, PTHREAD_CREATE_DETACHED) != 0)
+    {
         return 0;
+        perror("INIT could not set detach state for request_thread_attr");
+    }
 
     if (!initialize_vector_mutexes())
+    {
         return 0;
+        printf("INIT coud not initialize vector mutexes");
+    }
 
-    return initialize_request_queues();
+    if (!initialize_request_queues())
+    {
+        return 0;
+        printf("INIT could not initialize request queues");
+    }
+
+    return 1;
 }
 
 
