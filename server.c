@@ -28,19 +28,6 @@
 #define MAX_VECTOR_NAME_LEN 39
 #define MAX_RESP_QUEUE_NAME_LEN 64
 
-// set value in vector
-#define SET_QUEUE_NAME "/set"
-#define SET_QUEUE_MAX_MESSAGES 10
-#define SET_SUCCESS 0
-#define SET_FAIL -1
-
-// errors
-#define QUEUE_OPEN_ERROR 13
-#define QUEUE_INIT_SUCCESS 1
-#define REQUEST_THREAD_CREATE_SUCCESS 0
-#define REQUEST_THREAD_CREATE_FAIL -1
-
-
 struct init_msg {
     char name[MAX_VECTOR_NAME_LEN];
     int size;
@@ -48,6 +35,12 @@ struct init_msg {
 };
 
 #define INIT_MSG_SIZE sizeof(struct init_msg)
+
+// set value in vector
+#define SET_QUEUE_NAME "/set"
+#define SET_QUEUE_MAX_MESSAGES 10
+#define SET_SUCCESS 0
+#define SET_FAIL -1
 
 struct set_msg {
     char name[MAX_VECTOR_NAME_LEN];
@@ -57,6 +50,31 @@ struct set_msg {
 };
 
 #define SET_MSG_SIZE sizeof(struct set_msg)
+
+// get value from vector
+#define GET_QUEUE_NAME "/get"
+#define GET_QUEUE_MAX_MESSAGES 10
+#define GET_SUCCESS 0
+#define GET_FAIL -1
+
+struct get_msg {
+    char name[MAX_VECTOR_NAME_LEN];
+    int pos;
+    char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
+};
+
+#define GET_MSG_SIZE sizeof(struct get_msg);
+
+struct get_resp_msg {
+    int value;
+    int error;
+};
+
+// errors
+#define QUEUE_OPEN_ERROR 13
+#define QUEUE_INIT_SUCCESS 1
+#define REQUEST_THREAD_CREATE_SUCCESS 0
+#define REQUEST_THREAD_CREATE_FAIL -1
 
 // storage
 #define VECTORS_FOLDER "vectors/"
@@ -102,6 +120,7 @@ int start_request_thread(void* (*thread_function)(void*), void* p_args);
 */
 int initialize_init_vector_queue();
 int initialize_set_queue();
+int initialize_get_queue();
 int close_queues();
 /*
     creat a vector physically
@@ -142,6 +161,7 @@ pthread_t user_input_thread;
 // queue descriptors
 mqd_t q_init_vector;
 mqd_t q_set;
+mqd_t q_get;
 
 // storage
 struct vector_mutex** vector_mutexes;
@@ -244,6 +264,12 @@ int initialize_request_queues()
     if (initialize_set_queue() != QUEUE_INIT_SUCCESS)
     {
         perror("INIT ERROR: could not open set queue");
+        return 0;
+    }
+
+    if (initialize_get_queue() != QUEUE_INIT_SUCCESS)
+    {
+        perror("INIT ERROR: could not open get queue");
         return 0;
     }
 
@@ -366,6 +392,18 @@ int close_queues()
     if (mq_unlink(SET_QUEUE_NAME) != 0)
     {
         perror("CLEAN UP could not unlink set queue");
+        res = 0;
+    }
+
+    // close get queue
+    if (mq_close(q_get) != 0)
+    {
+        perror("CLEAN UP could not close get queue");
+        res = 0;
+    }
+    if (mq_unlink(GET_QUEUE_NAME) != 0)
+    {
+        perror("CLEAN UP could not unlink get queue");
         res = 0;
     }
 
@@ -871,6 +909,38 @@ void *set(void* p_set_msg)
     }
     
     pthread_exit(0);
+}
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// get value from vector
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int initialize_get_queue()
+{
+    int res = QUEUE_INIT_SUCCESS;
+
+    struct mq_attr q_get_attr;
+    
+    q_get_attr.mq_flags = 0;                                // ingnored for MQ_OPEN
+    q_get_attr.mq_maxmsg = GET_QUEUE_MAX_MESSAGES;
+    q_get_attr.mq_msgsize = GET_MSG_SIZE;        
+    q_get_attr.mq_curmsgs = 0;                              // initially 0 messages
+
+    int open_flags = O_CREAT | O_RDONLY | O_NONBLOCK;
+    mode_t permissions = S_IRUSR | S_IWUSR;                 // allow reads and writes into queue
+
+    if ((
+        q_get = mq_open(GET_QUEUE_NAME, open_flags, permissions, 
+        &q_get_attr)) == -1)
+    {
+        res = QUEUE_OPEN_ERROR;
+    }
+    
+    return res;
 }
 
 
