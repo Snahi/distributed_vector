@@ -63,12 +63,14 @@ struct get_msg {
     char resp_queue_name[MAX_RESP_QUEUE_NAME_LEN];
 };
 
-#define GET_MSG_SIZE sizeof(struct get_msg);
+#define GET_MSG_SIZE sizeof(struct get_msg)
 
 struct get_resp_msg {
     int value;
     int error;
 };
+
+#define GET_RESP_MSG_SIZE sizeof(struct get_resp_msg)
 
 // errors
 #define QUEUE_OPEN_ERROR 13
@@ -129,6 +131,7 @@ int create_vector(char* name, int size);
 int copy_message(char* p_source, char* p_destination, int size);
 void *init_vector(void* p_init_msg);
 void* set(void* p_set_msg);
+void* get(void* p_get_msg);
 /* 
     starts a thread for reading user input
 */
@@ -189,6 +192,7 @@ int main (int argc, char **argv)
         // messages
         struct init_msg in_init_msg;
         struct set_msg in_set_msg;
+        struct get_msg in_get_msg;
 
         // listen for requests
         while (strcmp(user_input, EXIT_COMMAND) != 0)
@@ -208,6 +212,14 @@ int main (int argc, char **argv)
                 if (start_request_thread(set, &in_set_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
                     perror("REQUEST THREAD could not create thread for set value request");
+                }
+            }
+
+            if (mq_receive(q_get, (char*) &in_get_msg, GET_MSG_SIZE, NULL) != -1)
+            {
+                if (start_request_thread(get, &in_get_msg) != REQUEST_THREAD_CREATE_SUCCESS)
+                {
+                    perror("REQUEST THREAD could not create thread for get value request");
                 }
             }
         }
@@ -941,6 +953,121 @@ int initialize_get_queue()
     }
     
     return res;
+}
+
+
+
+int get_value_from_vector_file(char* vec_name, int pos, int* p_value)
+{
+    if (pos < 0)
+        return 0;
+
+    int res = 1;
+    int found = 0;
+
+    pthread_mutex_t* p_mutex_vec;
+    if ((p_mutex_vec = get_vector_mutex(vec_name)) != NULL) // obtain mutex for the vector file
+    {
+        if (pthread_mutex_lock(p_mutex_vec) == 0) // lock vector file mutex
+        {
+
+            char full_vector_file_name[get_full_vector_file_name_max_len()];
+            get_full_vector_file_name(full_vector_file_name, vec_name);
+
+            FILE* fp;
+
+            if ((fp = fopen(full_vector_file_name, "r")) != NULL) // open the vector file
+            {
+                char line[20];  // temp varible for reading lines from vector file
+                int line_idx = -1;  // -1 because line 0 is size of vector
+                while (fgets(line, 20, fp) != NULL)
+                {
+                    if (line_idx == pos)
+                    {
+                        found = 1;
+                        if (sscanf(line, "%d", p_value) <= 0)
+                        {
+                            perror("GET VALUE FROM VECTOR FILE could not match value to integer");
+                            res = 0;
+                        }
+
+                        break;
+                    }
+
+                    line_idx++;
+                } // end read file while
+
+                if (fclose(fp) != 0)
+                {
+                    res = 0;
+                    perror("GET VALUE FROM VECTOR FILE could not close file");
+                }
+            }
+            else // can't open file
+            {
+                res = 0;
+                perror("GET VALUE FROM VECTOR FILE could not open file");
+            }
+
+            if (pthread_mutex_unlock(p_mutex_vec) != 0)
+            {
+                res = 0;
+                perror("GET VALUE FROM VECTOR FILE could not close file");
+            }
+        }
+        else // couldn't lock mutex
+        {
+            res = 0;
+            perror("GET VALUE FROM VECTOR FILE could not lock mutex");
+        }  
+    }
+    else // vector doesn't exist
+        res = 0;
+
+    return res && found;
+}
+
+
+
+void* get(void* p_get_msg)
+{
+    struct get_msg get_msg;
+    if (copy_message((char*) p_get_msg, (char*) &get_msg, GET_MSG_SIZE) == 1)
+    {
+        // get value from file
+        int value = 0;
+        int error = get_value_from_vector_file(get_msg.name, get_msg.pos, &value) ? 
+            GET_SUCCESS : GET_FAIL;
+        
+        // send response
+        mqd_t q_resp;
+        if ((q_resp = mq_open(get_msg.resp_queue_name, O_WRONLY)) == -1)
+        {
+            perror("RESPONSE ERROR could not open queue for sending response");
+        }
+        else
+        {
+            struct get_resp_msg response;
+            response.error = error;
+            response.value = value;
+
+            if (mq_send(q_resp, (char*) &response, GET_RESP_MSG_SIZE, 0) == -1)
+            {
+                perror("RESPONSE ERROR could not send response");
+            }
+
+            if (mq_close(q_resp) == -1)
+            {
+                perror ("RESPONSE QUEUE could not close response queue");
+            }
+        }
+    }
+    else
+    {
+        perror("SET couldn't copy_message");
+    }
+    
+    pthread_exit(0);
 }
 
 
