@@ -256,28 +256,24 @@ int main (int argc, char **argv)
         perror("INIT could not initialize server");
         exit(1);
     }
-    for (int i = 0; i < vector_size(vector_mutexes); i++)
-    {
-        printf("mutex: %s\n", vector_mutexes[i]->vector_name);
-    }
+
     if (start_reading_user_input() == 0)
     {
-        // messages
+        // messages to be retrived from requests
         struct init_msg in_init_msg;
         struct set_msg in_set_msg;
         struct get_msg in_get_msg;
         struct destroy_msg in_destroy_msg;
 
-        // listen for requests
+        // listen for requests till user wirtes exit command
         while (strcmp(user_input, EXIT_COMMAND) != 0)
         {
             // read messages in all queues if available
             if (mq_receive(q_init_vector, (char*) &in_init_msg, INIT_MSG_SIZE, NULL) != -1)
             {
-                // init queue
                 if (start_request_thread(init_vector, &in_init_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    perror("REQUEST THREAD could not create thread for init vector request");
+                    printf("REQUEST THREAD could not create thread for init vector request");
                 }
             }
 
@@ -285,7 +281,7 @@ int main (int argc, char **argv)
             {
                 if (start_request_thread(set, &in_set_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    perror("REQUEST THREAD could not create thread for set value request");
+                    printf("REQUEST THREAD could not create thread for set value request");
                 }
             }
 
@@ -293,7 +289,7 @@ int main (int argc, char **argv)
             {
                 if (start_request_thread(get, &in_get_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    perror("REQUEST THREAD could not create thread for get value request");
+                    printf("REQUEST THREAD could not create thread for get value request");
                 }
             }
 
@@ -301,7 +297,7 @@ int main (int argc, char **argv)
             {
                 if (start_request_thread(destroy, &in_destroy_msg) != REQUEST_THREAD_CREATE_SUCCESS)
                 {
-                    perror("REQUEST THREAD could not create thread for destroy request");
+                    printf("REQUEST THREAD could not create thread for destroy request");
                 }
             }
         } // end main while
