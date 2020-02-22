@@ -132,7 +132,8 @@ int initialize_vector_mutexes();
 */
 int destroy_vector_mutexes();
 /*
-    creates and adds a new vector mutex to the vector_mutexes list
+    creates and adds a new vector mutex to the vector_mutexes list.
+    1 --> success, 0 --> fail
 */
 int add_vector_mutex(char* vec_name);
 /*
@@ -328,38 +329,38 @@ int init()
 {
     if (pthread_mutex_init(&mutex_msg, NULL) != 0)
     {
-        return 0;
         perror("INIT could not init mutex_msg");
+        return 0;
     }
 
     if (pthread_cond_init(&cond_msg, NULL) != 0)
     {
-        return 0;
         perror("INIT could not init cond_msg");
+        return 0;
     }
 
     if (pthread_attr_init(&request_thread_attr) != 0)
     {
-        return 0;
         perror("INIT could not init request_thread_attr");
+        return 0;
     }
 
     if (pthread_attr_setdetachstate(&request_thread_attr, PTHREAD_CREATE_DETACHED) != 0)
     {
-        return 0;
         perror("INIT could not set detach state for request_thread_attr");
+        return 0;
     }
 
     if (!initialize_vector_mutexes())
     {
-        return 0;
         printf("INIT coud not initialize vector mutexes");
+        return 0;
     }
 
     if (!initialize_request_queues())
     {
-        return 0;
         printf("INIT could not initialize request queues");
+        return 0;
     }
 
     return 1;
@@ -372,25 +373,28 @@ int initialize_request_queues()
     // init queue
     if (initialize_init_vector_queue() != QUEUE_INIT_SUCCESS)
     {
-        perror("INIT ERROR: could not open init vector queue");
+        printf("INITIALIZE REQUEST QUEUES could not open init vector queue");
         return 0;
     }
 
+    // set queue
     if (initialize_set_queue() != QUEUE_INIT_SUCCESS)
     {
-        perror("INIT ERROR: could not open set queue");
+        perror("INITIALIZE REQUEST QUEUES could not open set queue");
         return 0;
     }
 
+    // get queue
     if (initialize_get_queue() != QUEUE_INIT_SUCCESS)
     {
-        perror("INIT ERROR: could not open get queue");
+        perror("INITIALIZE REQUEST QUEUES could not open get queue");
         return 0;
     }
 
+    // destroy queue
     if (initialize_destroy_queue() != QUEUE_INIT_SUCCESS)
     {
-        perror("INIT ERROR: could not open destroy queue");
+        perror("INITIALIZE REQUEST QUEUES could not open destroy queue");
         return 0;
     }
 
@@ -407,7 +411,10 @@ int add_vector_mutex(char* vec_name)
     vector_add(&vector_mutexes, p_vec_mut);
     
     if (pthread_mutex_init(&p_vec_mut->mutex, NULL) != 0)
+    {
+        printf("ADD VECTOR MUTEX could not initialize vector mutex");
         return 0;
+    }
 
     return 1;
 }
@@ -421,42 +428,56 @@ int initialize_vector_mutexes()
     DIR* vec_dir;
     struct dirent* vec_dir_ent;
 
-    if ((vec_dir = opendir(VECTORS_FOLDER)) != NULL)
+    if ((vec_dir = opendir(VECTORS_FOLDER)) != NULL) // open the directory with vectors
     {
         vector_mutexes = vector_create();
 
-        int extension_len = strlen(VECTOR_FILE_EXTENSION);
-        char extension[extension_len + 1];
+        int extension_len = strlen(VECTOR_FILE_EXTENSION);      // length of vector file extension
+        char extension[extension_len + 1];                      // vector file extension; + 1 because of \0
         extension[extension_len] = '\0';
-        char f_name[MAX_VECTOR_NAME_LEN + extension_len + 1];
+        char f_name[MAX_VECTOR_NAME_LEN + extension_len + 1];   // vector file name with extension
         int f_name_len = 0;
-        char f_name_no_extension[MAX_VECTOR_NAME_LEN];
+        char f_name_no_extension[MAX_VECTOR_NAME_LEN];          // vector file name with no extension
         int f_name_no_extension_len = 0;
 
-        while ((vec_dir_ent = readdir(vec_dir)) != NULL)
+        while ((vec_dir_ent = readdir(vec_dir)) != NULL) // read all files in the vector directory
         {
             strcpy(f_name, vec_dir_ent->d_name);
             f_name_len = strlen(f_name);
+
             if (f_name_len > extension_len) // ignore non vector files (too short name)
             {
+                // obtain file extension
                 strncpy(extension, f_name + f_name_len - extension_len, extension_len);
                 
                 if (strcmp(extension, VECTOR_FILE_EXTENSION) == 0)  // ignore files with wrong extension
                 {
                     f_name_no_extension_len = f_name_len - extension_len;
+                    // cut just vector name - ignore file extension
                     strncpy(f_name_no_extension, f_name, f_name_no_extension_len);
+                    // fininsh the f_name_no_extension with string end character
                     f_name_no_extension[f_name_no_extension_len] = '\0';
-                    printf("%s %d %s %d %s\n", f_name, f_name_len, extension, extension_len, f_name_no_extension);
-                    add_vector_mutex(f_name_no_extension);
+                    
+                    if (!add_vector_mutex(f_name_no_extension))
+                    {
+                        res = 0;
+                        printf("INITIALIZE VECTOR MUTEXES could not add the mutex to the list");
+                    }
                 }
-            }
-        }
+            } // end if (f_name_len > extension_len)
+        } // end while ((vec_dir_ent = readdir(vec_dir)) != NULL)
 
         if (closedir(vec_dir) != 0)
+        {
             res = 0;
+            perror("INITIALIZE VECTOR MUTEXES could not close vectors directory");
+        }
     }
-    else
+    else // couldn't open the vector's directory
+    {
         res = 0;
+        printf("INITIALIZE VECTOR MUTEXES could not open the vectors directory");
+    }
 
     return res;
 }
