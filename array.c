@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <errno.h>
+#include "array.h"
 
 
 
@@ -23,9 +24,6 @@
 #define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
 #define MAX_VECTOR_NAME_LEN 40
 #define MAX_RESP_QUEUE_NAME_LEN 64
-#define NEW_VECTOR_CREATED 1
-#define VECTOR_ALREADY_EXISTS 0
-#define VECTOR_CREATION_ERROR -1
 
 struct init_msg {
     char name[MAX_VECTOR_NAME_LEN];
@@ -38,8 +36,6 @@ struct init_msg {
 // set ////////////////////////////////////////////////////////////////////////////////////////////
 #define SET_QUEUE_NAME "/set"
 #define SET_RESP_QUEUE_PREFIX "setval"
-#define SET_SUCCESS 0
-#define SET_FAIL -1
 
 struct set_msg {
     char name[MAX_VECTOR_NAME_LEN];
@@ -53,8 +49,6 @@ struct set_msg {
 // get ////////////////////////////////////////////////////////////////////////////////////////////
 #define GET_QUEUE_NAME "/get"
 #define GET_RESP_QUEUE_PREFIX "getval"
-#define GET_SUCCESS 0
-#define GET_FAIL -1
 
 struct get_msg {
     char name[MAX_VECTOR_NAME_LEN];
@@ -74,8 +68,6 @@ struct get_resp_msg {
 // destroy ////////////////////////////////////////////////////////////////////////////////////////
 #define DESTROY_QUEUE_NAME "/destroy"
 #define DESTROY_RESP_QUEUE_PREFIX "destr"
-#define DESTROY_SUCCESS 1
-#define DESTROY_FAIL -1
 
 struct destroy_msg {
     char name[MAX_VECTOR_NAME_LEN];
@@ -479,45 +471,4 @@ int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue, size_t msg_siz
     strcpy(que_name, local_que_name);
     
     return 1;
-}
-
-
-
-int main (int argc, char **argv)
-{
-    // for (int i = 0; i < 20; i++)
-    // {
-    //     char name[7];
-    //     sprintf(name, "v%d", i);
-
-    //     int res = init(name, 12);
-    //     printf("init res: %d\n", res);
-
-    //     res = set(name, -1, -1);
-    //     printf("fail: %d\n", res);
-
-    //     res = set(name, 10, -10);
-    //     printf("fail: %d\n", res);
-
-    //     res = set(name, 0, 1);
-    //     printf("success: %d\n", res);
-
-    //     res = set(name, 9, 10);
-    //     printf("success: %d\n", res);
-    // }
-
-    printf("%d\n", init("a", 3));
-    // printf("%d\n", set("a", -2, 2));
-    // int val = -1;
-    // get("a", 1, &val);
-    // printf("%d\n", val);
-    // int val = -1;
-    // res = get(name, -1, &val);
-    // printf("get result (success): %d, expected value 10 : %d\n", res, val);
-
-    // int res = 100;
-    // res = destroy("c");
-    // printf("destroy result: %d\n", res);
-
-    exit (0);
 }
