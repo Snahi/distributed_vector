@@ -17,8 +17,9 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 #define NAME_REGEX "^[a-zA-Z0-9]+$"
 
-// init
+// init ///////////////////////////////////////////////////////////////////////////////////////////
 #define INIT_VECTOR_QUEUE_NAME "/init"
+#define INIT_RESP_QUEUE_PREFIX "initvec"
 #define INIT_VECTOR_QUEUE_MAX_MESSAGES 10
 #define MAX_VECTOR_NAME_LEN 40
 #define MAX_RESP_QUEUE_NAME_LEN 64
@@ -34,8 +35,9 @@ struct init_msg {
 
 #define INIT_MSG_SIZE sizeof(struct init_msg)
 
-// set
+// set ////////////////////////////////////////////////////////////////////////////////////////////
 #define SET_QUEUE_NAME "/set"
+#define SET_RESP_QUEUE_PREFIX "setval"
 #define SET_SUCCESS 0
 #define SET_FAIL -1
 
@@ -48,8 +50,9 @@ struct set_msg {
 
 #define SET_MSG_SIZE sizeof(struct set_msg)
 
-// get
+// get ////////////////////////////////////////////////////////////////////////////////////////////
 #define GET_QUEUE_NAME "/get"
+#define GET_RESP_QUEUE_PREFIX "getval"
 #define GET_SUCCESS 0
 #define GET_FAIL -1
 
@@ -68,8 +71,9 @@ struct get_resp_msg {
 
 #define GET_RESP_MSG_SIZE sizeof(struct get_resp_msg)
 
-// destroy
+// destroy ////////////////////////////////////////////////////////////////////////////////////////
 #define DESTROY_QUEUE_NAME "/destroy"
+#define DESTROY_RESP_QUEUE_PREFIX "destr"
 #define DESTROY_SUCCESS 1
 #define DESTROY_FAIL -1
 
@@ -92,7 +96,7 @@ int is_init_data_valid(char* name, int size);
 int is_name_valid(char* name);
 int open_server_init_queue(mqd_t* p_queue);
 /*
-    creates and opens unique queue for getting integer response from server
+    creates and opens a queue with unique name for getting a response from the server
 */
 int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue, size_t msg_size);
 int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_q_server, 
@@ -117,7 +121,6 @@ int init(char* name, int size)
 
         if ((q_server_init = mq_open(INIT_VECTOR_QUEUE_NAME, O_WRONLY)) == -1)
         {
-            perror("Cannot open init vector server queue from client perspective");
             result = VECTOR_CREATION_ERROR;
         }
         else
@@ -125,33 +128,22 @@ int init(char* name, int size)
             // queue for response from server
             mqd_t q_resp;
             char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
-            if (open_resp_queue("initvec", resp_que_name, &q_resp, sizeof(int)) == 1)
+            if (open_resp_queue(INIT_RESP_QUEUE_PREFIX, resp_que_name, &q_resp, sizeof(int)) == 1)
             {
                 result = create_vector_on_server(name, size, resp_que_name, &q_server_init, &q_resp);
 
-                // close and delete response queue
+                // close and unlink response queue
                 if (mq_close (q_resp) == -1)
-                {
-                    perror ("Cannot close response queue");
                     result = VECTOR_CREATION_ERROR;
-                }
 
                 if (mq_unlink(resp_que_name) == -1)
-                {
-                    perror("Cannot unlink response queue");
                     result = VECTOR_CREATION_ERROR;
-                }
             }
-            else
-            {
-                perror("RESPONSE QUEUE couldn't open response queue");
+            else // couldn't open response queue
                 result = VECTOR_CREATION_ERROR;
-            }
 
             if (mq_close (q_server_init) == -1) 
-            {
-                perror ("cannot close q_server_init queue");
-            }
+                result = VECTOR_CREATION_ERROR;
         }
     }
     else 
@@ -193,15 +185,10 @@ int is_name_valid(char* name)
             regfree(&regex);
         }
         else
-        {
             res = 0;
-            printf("Could not compile regex\n");
-        }
     }
     else
-    {
         res = 0;
-    }
     
     return res;
 }
@@ -221,18 +208,12 @@ int create_vector_on_server(char* name, int size, char* resp_que_name, mqd_t* p_
 
     // send message
     if (mq_send(*p_q_server, (char*) &msg, INIT_MSG_SIZE, 0) == -1)
-    {
-        perror("Cannot send init vector message to server");
         result = VECTOR_CREATION_ERROR;
-    }
     else // message send successfully
     {
         // wait for response
         if (mq_receive(*p_q_resp, (char*) &result, sizeof(int), NULL) == -1)
-        {
-            perror("Cannot receive response message in init vector");
             result = VECTOR_CREATION_ERROR;
-        }
     }
 
     return result;
@@ -260,18 +241,12 @@ int set_on_server(char* name, int pos, int val, char* resp_que_name, mqd_t* p_q_
 
     // send message
     if (mq_send(*p_q_server, (char*) &msg, SET_MSG_SIZE, 0) == -1)
-    {
-        perror("Cannot send set message to server");
         result = SET_FAIL;
-    }
     else // message send successfully
     {
         // wait for response
         if (mq_receive(*p_q_resp, (char*) &result, sizeof(int), NULL) == -1)
-        {
-            perror("Cannot receive response message in set vector");
             result = SET_FAIL;
-        }
     }
 
     return result;
@@ -286,43 +261,28 @@ int set(char* name, int pos, int val)
     mqd_t q_server_set;
 
     if ((q_server_set = mq_open(SET_QUEUE_NAME, O_WRONLY)) == -1)
-    {
-        perror("Cannot open set server queue from client perspective");
         result = SET_FAIL;
-    }
     else
     {
         // queue for response from server
         mqd_t q_resp;
         char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
-        if (open_resp_queue("setval", resp_que_name, &q_resp, sizeof(int)) == 1)
+        if (open_resp_queue(SET_RESP_QUEUE_PREFIX, resp_que_name, &q_resp, sizeof(int)) == 1)
         {
             result = set_on_server(name, pos, val, resp_que_name, &q_server_set, &q_resp);
 
             // close and delete response queue
             if (mq_close (q_resp) == -1)
-            {
-                perror ("Cannot close response queue");
                 result = SET_FAIL;
-            }
 
             if (mq_unlink(resp_que_name) == -1)
-            {
-                perror("Cannot unlink response queue");
                 result = SET_FAIL;
-            }
         }
         else // couldn't open response queue
-        {
-            perror("RESPONSE QUEUE couldn't open response queue");
             result = SET_FAIL;
-        }
 
         if (mq_close(q_server_set) == -1) 
-        {
-            perror("cannot close q_server_init queue");
             result = SET_FAIL;
-        }
     }
 
     return result;
@@ -349,20 +309,14 @@ int get_from_server(char* name, int pos, int* p_val, char* resp_que_name, mqd_t*
 
     // send message
     if (mq_send(*p_q_server, (char*) &msg, GET_MSG_SIZE, 0) == -1)
-    {
-        perror("Cannot send get message to server");
         result = GET_FAIL;
-    }
     else // message send successfully
     {
         struct get_resp_msg response;
 
         // wait for response
         if (mq_receive(*p_q_resp, (char*) &response, GET_RESP_MSG_SIZE, NULL) == -1)
-        {
-            perror("Cannot receive response message in set vector");
             result = SET_FAIL;
-        }
         else
         {
             result = response.error;
@@ -382,43 +336,28 @@ int get(char* name, int pos, int* value)
     mqd_t q_server_get;
 
     if ((q_server_get = mq_open(GET_QUEUE_NAME, O_WRONLY)) == -1)
-    {
-        perror("Cannot open gett server queue from client perspective");
         result = GET_FAIL;
-    }
     else
     {
         // queue for response from server
         mqd_t q_resp;
         char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
-        if (open_resp_queue("getval", resp_que_name, &q_resp, GET_RESP_MSG_SIZE) == 1)
+        if (open_resp_queue(GET_RESP_QUEUE_PREFIX, resp_que_name, &q_resp, GET_RESP_MSG_SIZE) == 1)
         {
             result = get_from_server(name, pos, value, resp_que_name, &q_server_get, &q_resp);
 
             // close and delete response queue
             if (mq_close (q_resp) == -1)
-            {
-                perror ("Cannot close response queue");
                 result = SET_FAIL;
-            }
 
             if (mq_unlink(resp_que_name) == -1)
-            {
-                perror("Cannot unlink response queue");
                 result = SET_FAIL;
-            }
         }
         else // couldn't open response queue
-        {
-            perror("RESPONSE QUEUE couldn't open response queue");
             result = SET_FAIL;
-        }
 
         if (mq_close(q_server_get) == -1) 
-        {
-            perror("cannot close q_server_init queue");
             result = SET_FAIL;
-        }
     }
 
     return result;
@@ -443,18 +382,12 @@ int destroy_on_server(char* name, char* resp_que_name, mqd_t* p_q_server, mqd_t*
     
     // send message
     if (mq_send(*p_q_server, (char*) &msg, DESTROY_MSG_SIZE, 0) == -1)
-    {
-        perror("Cannot send destroy message to server");
         result = GET_FAIL;
-    }
     else // message send successfully
     {
         // wait for response
         if (mq_receive(*p_q_resp, (char*) &result, sizeof(int), NULL) == -1)
-        {
-            perror("Cannot receive response message in destroy vector");
             result = SET_FAIL;
-        }
     }
 
     return result;
@@ -469,43 +402,28 @@ int destroy(char* vec_name)
     mqd_t q_server_destroy;
 
     if ((q_server_destroy = mq_open(DESTROY_QUEUE_NAME, O_WRONLY)) == -1)
-    {
-        perror("Cannot open destroy server queue from client perspective");
         result = DESTROY_FAIL;
-    }
     else
     {
         // queue for response from server
         mqd_t q_resp;
         char resp_que_name[MAX_RESP_QUEUE_NAME_LEN];
-        if (open_resp_queue("destroy", resp_que_name, &q_resp, sizeof(int)) == 1)
+        if (open_resp_queue(DESTROY_RESP_QUEUE_PREFIX, resp_que_name, &q_resp, sizeof(int)) == 1)
         {
             result = destroy_on_server(vec_name, resp_que_name, &q_server_destroy, &q_resp);
 
             // close and delete response queue
             if (mq_close(q_resp) == -1)
-            {
-                perror ("Cannot close response queue");
                 result = SET_FAIL;
-            }
 
             if (mq_unlink(resp_que_name) == -1)
-            {
-                perror("Cannot unlink response queue");
                 result = SET_FAIL;
-            }
         }
         else // couldn't open response queue
-        {
-            perror("RESPONSE QUEUE couldn't open response queue");
             result = SET_FAIL;
-        }
 
         if (mq_close(q_server_destroy) == -1) 
-        {
-            perror("cannot close q_server_init queue");
             result = SET_FAIL;
-        }
     }
 
     return result;
@@ -555,9 +473,7 @@ int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue, size_t msg_siz
             }
         }
         else // error occurred (but not because of non unique name)
-        {
             return 0;
-        }
     }
 
     strcpy(que_name, local_que_name);
