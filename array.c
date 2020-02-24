@@ -506,11 +506,11 @@ int main (int argc, char **argv)
     //     printf("success: %d\n", res);
     // }
 
-    // printf("%d\n", init("c", 3));
+    printf("%d\n", init("a", 3));
     // printf("%d\n", set("a", -2, 2));
-    int val = -1;
-    get("a", 1, &val);
-    printf("%d\n", val);
+    // int val = -1;
+    // get("a", 1, &val);
+    // printf("%d\n", val);
     // int val = -1;
     // res = get(name, -1, &val);
     // printf("get result (success): %d, expected value 10 : %d\n", res, val);

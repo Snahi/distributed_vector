@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include "vec.h"
 #include <dirent.h>
+#include <sys/stat.h>
 
 
 
@@ -129,6 +130,10 @@ int initialize_request_queues();
     creates mutex for every stored vector. 1 -> success, 0 -> fail
 */
 int initialize_vector_mutexes();
+/*
+    checks whether folder for storing vectors exists and if no then creates one
+*/
+int initialize_vectors_folder();
 /*
     destroys all vector mutexes and frees memory after them. 1 -> success, 0 -> fail
 */
@@ -376,6 +381,12 @@ int init()
         return 0;
     }
 
+    if (!initialize_vectors_folder())
+    {
+        printf("INIT could not initialize vectors folder\n");
+        return 0;
+    }
+
     if (!initialize_vector_mutexes())
     {
         printf("INIT coud not initialize vector mutexes\n");
@@ -508,6 +519,25 @@ int initialize_vector_mutexes()
     }
 
     return res;
+}
+
+
+
+int initialize_vectors_folder()
+{
+    struct stat st = {0};
+
+    // if the directory doesn't exist
+    if (stat(VECTORS_FOLDER, &st) == -1)
+    {
+        if (mkdir(VECTORS_FOLDER, S_IRWXU) != 0)
+        {
+            perror("INITIALIZE VECTORS FOLDER could not create the vectors folder");
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 
