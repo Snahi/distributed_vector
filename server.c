@@ -110,6 +110,8 @@ struct destroy_msg {
 struct vector_mutex {
     char vector_name[MAX_VECTOR_NAME_LEN];
     pthread_mutex_t mutex;
+    int num_of_waiting_threads;
+    int to_remove;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -137,14 +139,30 @@ int destroy_vector_mutexes();
 */
 int add_vector_mutex(char* vec_name);
 /*
-    returns a pointer to the mutex for the vector with name equal to vector_name
+    returns a pointer to the mutex for the vector with name equal to vector_name. Also increases
+    the number of threads which are using the mutex. I keep track of it because on remove I must
+    be sure that no other thread uses this mutex, because that could lead to an undefined behaviur
 */
-pthread_mutex_t* get_vector_mutex(char* vector_name);
+struct vector_mutex* get_vector_mutex(char* vector_name);
+/*
+    calls pthread_mutex_unlock on the corresponding mutex and decreases the number of threads using
+    the mutex. Also if mutex is signed as to_remove and no more threads use it then it is removed.
+*/
+int unlock_vector_mutex(struct vector_mutex* p_vec_mutex);
+/*
+    notify that the thread is not using this mutex anymore, but was not locked so do not unlock
+*/
+// int release_vector_mutex(struct vector_mutex* p_vec_mutex);
 /*
     returns index of the mutex struct corresponding to the vector with name equal to vector_name
     in the vector_mutexes list. Returns -1 if not found, index otherwise
 */
 int get_vector_mutex_idx(char* vector_name);
+/*
+    marks vector mutex to remove, so that no new threads can access it and it's removed when
+    the last thread releases it
+*/
+int mark_vector_mutex_to_remove(struct vector_mutex* p_vec_mutex);
 /*
     generic method for starting threads for requests. thread_function depends on queue from
     which server reads. Main thread waits till arguments are copied to new thread.
@@ -228,6 +246,9 @@ int msg_not_copied = 1;     // flag used to check if a message has been copied b
 pthread_cond_t cond_msg;    // condition used together with mutex_msg for waiting until request 
                             // thread copies message
 pthread_attr_t request_thread_attr;
+
+pthread_mutex_t mutex_vec_mutex;    // mutex for acquiring and returning mutex for a particular
+                                    // vector file
 
 // user input /////////////////////////////////////////////////////////////////////////////////////
 pthread_t user_input_thread;
@@ -317,6 +338,8 @@ int main (int argc, char **argv)
         perror("CLEAN UP could not destroy cond_msg");
     if (pthread_attr_destroy(&request_thread_attr) != 0)
         perror("CLEAN UP could not destroy request_thread_attr");
+    if (pthread_mutex_destroy(&mutex_vec_mutex) != 0)
+        perror("CLEAN UP could not destroy mutex_vec_mutex");
 
     if (!destroy_vector_mutexes())
         printf("CLEAN UP could not destroy vector files mutexes\n");
@@ -410,13 +433,16 @@ int add_vector_mutex(char* vec_name)
     struct vector_mutex* p_vec_mut = (struct vector_mutex*) malloc(sizeof(struct vector_mutex));
 
     strcpy(p_vec_mut->vector_name, vec_name);
-    vector_add(&vector_mutexes, p_vec_mut);
-    
+    p_vec_mut->num_of_waiting_threads = 0;
+    p_vec_mut->to_remove = 0;
+
     if (pthread_mutex_init(&p_vec_mut->mutex, NULL) != 0)
     {
         printf("ADD VECTOR MUTEX could not initialize vector mutex\n");
         return 0;
     }
+
+    vector_add(&vector_mutexes, p_vec_mut);
 
     return 1;
 }
@@ -512,19 +538,140 @@ int destroy_vector_mutexes()
 
 
 
-pthread_mutex_t* get_vector_mutex(char* vector_name)
+struct vector_mutex* get_vector_mutex(char* vector_name)
 {
-    int size = vector_size(vector_mutexes);
-    for (int i = 0; i < size; i++)
+    struct vector_mutex* res = NULL;
+
+    if (pthread_mutex_lock(&mutex_vec_mutex) == 0)
     {
-        if (strcmp(vector_mutexes[i]->vector_name, vector_name) == 0)
+        int size = vector_size(vector_mutexes);
+        struct vector_mutex* p_vec_mutex = NULL;
+
+        for (int i = 0; i < size; i++)
         {
-            return &vector_mutexes[i]->mutex;
+            p_vec_mutex = vector_mutexes[i];
+
+            if (strcmp(p_vec_mutex->vector_name, vector_name) == 0 &&
+                !p_vec_mutex->to_remove)
+            {
+                vector_mutexes[i]->num_of_waiting_threads++;
+                break;
+            }
+
+            p_vec_mutex = NULL;
+        }
+        
+        if (pthread_mutex_unlock(&mutex_vec_mutex) == 0)
+            res = p_vec_mutex;
+        else
+        {
+            if (p_vec_mutex != NULL)
+                p_vec_mutex->num_of_waiting_threads--;
+            perror("GET VECTOR MUTEX could not unlock mutex");
+        }        
+    }
+    else // couldn't lock mutex_vec_mutex
+        perror("GET VECTOR MUTEX could not lock mutex_vec_mutex");
+
+    return res;
+}
+
+
+
+int unlock_vector_mutex(struct vector_mutex* p_vector_mutex)
+{
+    int res = 1;
+
+    if (pthread_mutex_lock(&mutex_vec_mutex) == 0)
+    {
+        int initial_num_of_waiting_threads = p_vector_mutex->num_of_waiting_threads;
+
+        p_vector_mutex->num_of_waiting_threads--;
+
+        // if marked to remove and no more threads are waiting remove it and free space
+        if (p_vector_mutex->to_remove == 1 && p_vector_mutex->num_of_waiting_threads == 0)
+        {
+            int size = vector_size(vector_mutexes);
+            for (int i = 0; i < size; i++)
+            {
+                if (vector_mutexes[i] == p_vector_mutex)
+                {
+                    if (pthread_mutex_unlock(&p_vector_mutex->mutex) == 0)
+                    {
+                        vector_remove(vector_mutexes, i);
+                        free(p_vector_mutex);
+                    }
+                    else
+                    {
+                        res = 0;
+                        p_vector_mutex->num_of_waiting_threads = initial_num_of_waiting_threads;
+                        perror("UNLOCK VECTOR MUTEX could not unlock the requested mutex");
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (pthread_mutex_unlock(&p_vector_mutex->mutex) != 0)
+            {
+                res = 0;
+                p_vector_mutex->num_of_waiting_threads = initial_num_of_waiting_threads;
+                perror("UNLOCK VECTOR MUTEX could not unlock the requested mutex, no remove");
+            }
+        }
+        
+
+        if (pthread_mutex_unlock(&mutex_vec_mutex) != 0)
+        {
+            res = 0;
+            p_vector_mutex->num_of_waiting_threads = initial_num_of_waiting_threads;
+            perror("UNLOCK VECTOR MUTEX could not unlock mutex_vec_mutex");
         }
     }
+    else // couldn't lock mutex_vec_mutex
+        perror("UNLOCK VECTOR MUTEX could not lock mutex_vec_mutex");
 
-    return NULL;
+    return res;
 }
+
+
+
+// int release_vector_mutex(struct vector_mutex* p_vec_mutex)
+// {
+//     int res = 1;
+
+//     if (pthread_mutex_lock(&mutex_vec_mutex) == 0)
+//     {
+//         int initial_num_of_waiting_threads = p_vec_mutex->num_of_waiting_threads;
+
+//         p_vec_mutex->num_of_waiting_threads--;
+
+//         // if marked to remove and no more threads are waiting remove it and free space
+//         if (p_vec_mutex->to_remove == 1 && p_vec_mutex->num_of_waiting_threads == 0)
+//         {
+//             int size = vector_size(vector_mutexes);
+//             for (int i = 0; i < size; i++)
+//             {
+//                 if (vector_mutexes[i] == p_vec_mutex)
+//                 {
+//                     vector_remove(vector_mutexes, i);
+//                     free(p_vec_mutex);
+//                 }
+//             }
+//         }
+
+//         if (pthread_mutex_unlock(&mutex_vec_mutex) != 0)
+//         {
+//             res = 0;
+//             p_vec_mutex->num_of_waiting_threads = initial_num_of_waiting_threads;
+//             perror("UNLOCK VECTOR MUTEX could not unlock mutex_vec_mutex");
+//         }
+//     }
+//     else // couldn't lock mutex_vec_mutex
+//         perror("UNLOCK VECTOR MUTEX could not lock mutex_vec_mutex");
+
+//     return res;
+// }
 
 
 
@@ -540,6 +687,31 @@ int get_vector_mutex_idx(char* vector_name)
     }
 
     return -1;
+}
+
+
+
+int mark_vector_mutex_to_remove(struct vector_mutex* p_vector_mutex)
+{
+    int res = 1;
+    
+    if (pthread_mutex_lock(&mutex_vec_mutex) == 0)
+    {
+        p_vector_mutex->to_remove = 1;
+
+        if (pthread_mutex_unlock(&mutex_vec_mutex) != 0)
+        {
+            res = 0;
+            perror("MARK VECTOR MUTEX TO REMOVE could not unlock mutex");
+        }
+    }
+    else
+    {
+        perror("MARK VECTOR MUTEX TO REMOVE could not lock mutex");
+        res = 0;
+    }
+    
+    return res;
 }
 
 
@@ -862,14 +1034,17 @@ int initialize_array_file(FILE* fp, int size)
 int create_array_file(char* name, int size)
 {
     int res = 1;
+    struct vector_mutex* p_vec_mutex = NULL;
     pthread_mutex_t* p_vec_file_mutex = NULL;
 
     if (add_vector_mutex(name)) // create mutex for new vector
     {
-        p_vec_file_mutex = get_vector_mutex(name); // acquire newly created mutex
+        p_vec_mutex = get_vector_mutex(name); // acquire newly created mutex
         
-        if (p_vec_file_mutex != NULL)
+        if (p_vec_mutex != NULL)
         {
+            p_vec_file_mutex = &p_vec_mutex->mutex;
+
             if (pthread_mutex_lock(p_vec_file_mutex) == 0)  // lock access to vector file
             {
                 char file_name[get_full_vector_file_name_max_len()];
@@ -892,7 +1067,7 @@ int create_array_file(char* name, int size)
                         perror("CREATE ARRAY FILE could not close file descriptor");
                     }
 
-                    if (pthread_mutex_unlock(p_vec_file_mutex) != 0)
+                    if (!unlock_vector_mutex(p_vec_mutex))
                     {
                         res = 0;
                         perror("CREATE ARRAY FILE could not unlock mutex");
@@ -910,10 +1085,9 @@ int create_array_file(char* name, int size)
                 perror("CREATE ARRAY FILE could not lock mutex");
             }
         }
-        else // NULL vector mutex
+        else // NULL vector mutex, no such vector
         {
             res = 0;
-            printf("CREATE ARRAY FILE null vector mutex\n");
         }
     }
     else // couldn't create vector mutex
@@ -984,10 +1158,13 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
         full_vector_file_name, strlen(full_vector_file_name) - strlen(VECTOR_FILE_EXTENSION));
     strcat(temp_file_name, TEMP_VECTOR_FILE_EXTENSION);
     
-    pthread_mutex_t* mutex_vec_file;
-    if ((mutex_vec_file = get_vector_mutex(vec_name)) != NULL) // obtain mutex for the vector file
+    struct vector_mutex* p_vec_mutex = NULL;
+    pthread_mutex_t* p_mutex_vec_file = NULL;
+
+    if ((p_vec_mutex = get_vector_mutex(vec_name)) != NULL) // obtain mutex for the vector file
     {
-        if (pthread_mutex_lock(mutex_vec_file) == 0)    // lock mutex for the vector file
+        p_mutex_vec_file = &p_vec_mutex->mutex;
+        if (pthread_mutex_lock(p_mutex_vec_file) == 0)    // lock mutex for the vector file
         {
             FILE* p_old, *p_new;
 
@@ -1067,7 +1244,7 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
                 perror("SET VALUE IN VECTOR FILE could not open the vector file");
             }
 
-            if (pthread_mutex_unlock(mutex_vec_file) != 0)
+            if (!unlock_vector_mutex(p_vec_mutex))
                 res = SET_FAIL;      
         }
         else // can't lock mutex
@@ -1076,10 +1253,9 @@ int set_value_in_vector_file(char* vec_name, int pos, int val)
             perror("SET VALUE IN VECTOR FILE could not lock the mutex");
         }
     }
-    else // can't obtain mutex
+    else // can't obtain mutex, no such vector
     {
         res = SET_FAIL;
-        printf("SET VALUE IN VECTOR FILE could not obtain mutex\n");
     }
 
     if (res == SET_SUCCESS && value_changed == 1)
@@ -1168,12 +1344,13 @@ int get_value_from_vector_file(char* vec_name, int pos, int* p_value)
     int res = 1;
     int found = 0;
 
+    struct vector_mutex* p_vec_mutex;
     pthread_mutex_t* p_mutex_vec;
-    if ((p_mutex_vec = get_vector_mutex(vec_name)) != NULL) // obtain mutex for the vector file
+    if ((p_vec_mutex = get_vector_mutex(vec_name)) != NULL) // obtain mutex for the vector file
     {
+        p_mutex_vec = &p_vec_mutex->mutex;
         if (pthread_mutex_lock(p_mutex_vec) == 0) // lock vector file mutex
         {
-
             char full_vector_file_name[get_full_vector_file_name_max_len()];
             get_full_vector_file_name(full_vector_file_name, vec_name);
 
@@ -1212,7 +1389,7 @@ int get_value_from_vector_file(char* vec_name, int pos, int* p_value)
                 perror("GET VALUE FROM VECTOR FILE could not open file");
             }
 
-            if (pthread_mutex_unlock(p_mutex_vec) != 0)
+            if (!unlock_vector_mutex(p_vec_mutex))
             {
                 res = 0;
                 perror("GET VALUE FROM VECTOR FILE could not unlock mutex");
@@ -1227,7 +1404,6 @@ int get_value_from_vector_file(char* vec_name, int pos, int* p_value)
     else // vector doesn't exist
     {
         res = 0;
-        printf("GET VALUE FROM VECTOR FILE could not obtain vector file mutex\n");
     }
 
     return res && found;
@@ -1318,10 +1494,12 @@ void* destroy(void* p_destroy_msg)
     {
         int result = DESTROY_SUCCESS;
         
+        struct vector_mutex* p_vec_mutex;
         pthread_mutex_t* p_mutex_vec;
         
-        if ((p_mutex_vec = get_vector_mutex(destroy_msg.name)) != NULL)
+        if ((p_vec_mutex = get_vector_mutex(destroy_msg.name)) != NULL)
         {
+            p_mutex_vec = &p_vec_mutex->mutex;
             char full_vector_file_name[get_full_vector_file_name_max_len()];
             get_full_vector_file_name(full_vector_file_name, destroy_msg.name);
             
@@ -1333,10 +1511,19 @@ void* destroy(void* p_destroy_msg)
                     result = DESTROY_FAIL;
                 }
 
-                if (pthread_mutex_unlock(p_mutex_vec) != 0)
+                if (mark_vector_mutex_to_remove(p_vec_mutex))
                 {
-                    perror("DESTROY could not unlock the mutex");
+                    if (!unlock_vector_mutex(p_vec_mutex))
+                    {
+                        result = DESTROY_FAIL;
+                        printf("DESTROY could not unlock vector mutex");
+                    }
                 }
+                else
+                {
+                    printf("DESTROY could not set mutex to remove\n");
+                }
+                
             }
             else // couldn't lock mutex
             {
@@ -1347,7 +1534,6 @@ void* destroy(void* p_destroy_msg)
         else // vector doesn't exist
         {
             result = DESTROY_FAIL;
-            printf("DESTROY mutex for specified vector does not exist\n");
         }
         
         // send response
