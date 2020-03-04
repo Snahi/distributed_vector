@@ -66,6 +66,13 @@ int basic_test_init()
         return 0;
     }
 
+    // clean up
+    if (remove("vectors/mypropervector.txt") != 0)
+    {
+        printf("FAIL: BASIC TEST INIT clean up error\n");
+        return 0;
+    }
+
     printf("SUCCESS: BASIC TEST INIT passed\n");
     return 1;
 }
@@ -141,6 +148,13 @@ int basic_test_set()
     if (res != -1)
     {
         printf("FAIL: BASIC TEST SET value set at position 11 while array size is 11\n");
+        return 0;
+    }
+
+    // clean up
+    if (remove("vectors/setvec.txt") != 0)
+    {
+        printf("FAIL: BASIC TEST INIT clean up error\n");
         return 0;
     }
 
@@ -224,6 +238,13 @@ int basic_test_get()
     if (res != -1)
     {
         printf("FAIL: BASIC TEST GET non existing vector\n");
+        return 0;
+    }
+
+    // clean up
+    if (remove("vectors/getvec.txt") != 0)
+    {
+        printf("FAIL: BASIC TEST INIT clean up error\n");
         return 0;
     }
 
@@ -358,7 +379,7 @@ int multithreaded_test()
         printf("FAIL: MULTITHREADED TEST could not join set threads\n");
         return 0;
     } 
-    printf("ihhaaa\n");
+
     // check whether set values are ok
     pthread_t t_get_1, t_get_2;
 
@@ -401,10 +422,19 @@ int multithreaded_test()
 
 int all_tests()
 {
+    int res = 1;
     int basic_test_res = basic_test();
     int multi_test_res = multithreaded_test();
 
-    return basic_test_res && multi_test_res;
+    if (basic_test_res && multi_test_res)
+        printf("GLOBAL SUCCESS: ALL TESTS PASSED\n");
+    else
+    {
+        printf("GLOBAL FAILURE: TESTS FAILED\n");
+        res = 0;
+    }
+
+    return res;
 }
 
 
@@ -413,40 +443,17 @@ int all_tests()
 
 int main (int argc, char **argv)
 {
+    // required minimum
+    init("vector1", 100);
+    init("vector2", 200);
+    set("vector1", 0, 40);
+    set("vector1", 120, 30);
+    init("vector1", 200);
+    destroy("vector1");
+    destroy("vector");
+
+    // additional tests
     all_tests();
-    // for (int i = 0; i < 20; i++)
-    // {
-    //     char name[7];
-    //     sprintf(name, "v%d", i);
-
-    //     int res = init(name, 12);
-    //     printf("init res: %d\n", res);
-
-    //     res = set(name, -1, -1);
-    //     printf("fail: %d\n", res);
-
-    //     res = set(name, 10, -10);
-    //     printf("fail: %d\n", res);
-
-    //     res = set(name, 0, 1);
-    //     printf("success: %d\n", res);
-
-    //     res = set(name, 9, 10);
-    //     printf("success: %d\n", res);
-    // }
-
-    // printf("%d\n", init("a", 3));
-    // printf("%d\n", set("a", -2, 2));
-    // int val = -1;
-    // get("a", 1, &val);
-    // printf("%d\n", val);
-    // int val = -1;
-    // res = get(name, -1, &val);
-    // printf("get result (success): %d, expected value 10 : %d\n", res, val);
-
-    // int res = 100;
-    // res = destroy("c");
-    // printf("destroy result: %d\n", res);
 
     return 0;
 }
