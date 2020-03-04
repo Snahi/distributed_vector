@@ -3,6 +3,10 @@
 
 
 
+// init test //////////////////////////////////////////////////////////////////////////////////////
+
+
+
 int basic_test_init()
 {
     // proper data
@@ -64,6 +68,10 @@ int basic_test_init()
     printf("SUCCESS: BASIC TEST INIT passed\n");
     return 1;
 }
+
+
+
+// set test ///////////////////////////////////////////////////////////////////////////////////////
 
 
 
@@ -138,6 +146,10 @@ int basic_test_set()
     printf("SUCCESS: BASIC TEST SET passed\n");
     return 1;
 }
+
+
+
+// get test ///////////////////////////////////////////////////////////////////////////////////////
 
 
 
@@ -220,13 +232,51 @@ int basic_test_get()
 
 
 
+// destroy test ///////////////////////////////////////////////////////////////////////////////////
+
+
+
+int basic_test_destroy()
+{
+    char name[] = "todestroy";
+    if (init(name, 10) != 1)
+    {
+        printf("FAIL: BASIC TEST DESTROY could not initialize vector\n");
+        return 0;
+    }
+
+    // proper destroy
+    if (destroy(name) != 1)
+    {
+        printf("FAIL: BASIC TEST DESTROY could not destory vector\n");
+        return 0;
+    }
+
+    // destroying nonexisting vector
+    if (destroy(name) != -1)
+    {
+        printf("FAIL: BASIC TEST DESTROY destroyed nonexisting vector\n");
+        return 0;
+    }
+
+    printf("SUCCESS: BASIC TEST DESTROY passed\n");
+    return 1;
+}
+
+
+
+// test all ///////////////////////////////////////////////////////////////////////////////////////
+
+
+
 int basic_test()
 {
     int init_test = basic_test_init();
     int set_test = basic_test_set();
     int get_test = basic_test_get();
+    int destroy_test = basic_test_destroy();
 
-    return init_test && set_test && get_test;
+    return init_test && set_test && get_test && destroy_test;
 }
 
 
