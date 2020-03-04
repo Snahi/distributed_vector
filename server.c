@@ -666,45 +666,6 @@ int unlock_vector_mutex(struct vector_mutex* p_vector_mutex)
 
 
 
-// int release_vector_mutex(struct vector_mutex* p_vec_mutex)
-// {
-//     int res = 1;
-
-//     if (pthread_mutex_lock(&mutex_vec_mutex) == 0)
-//     {
-//         int initial_num_of_waiting_threads = p_vec_mutex->num_of_waiting_threads;
-
-//         p_vec_mutex->num_of_waiting_threads--;
-
-//         // if marked to remove and no more threads are waiting remove it and free space
-//         if (p_vec_mutex->to_remove == 1 && p_vec_mutex->num_of_waiting_threads == 0)
-//         {
-//             int size = vector_size(vector_mutexes);
-//             for (int i = 0; i < size; i++)
-//             {
-//                 if (vector_mutexes[i] == p_vec_mutex)
-//                 {
-//                     vector_remove(vector_mutexes, i);
-//                     free(p_vec_mutex);
-//                 }
-//             }
-//         }
-
-//         if (pthread_mutex_unlock(&mutex_vec_mutex) != 0)
-//         {
-//             res = 0;
-//             p_vec_mutex->num_of_waiting_threads = initial_num_of_waiting_threads;
-//             perror("UNLOCK VECTOR MUTEX could not unlock mutex_vec_mutex");
-//         }
-//     }
-//     else // couldn't lock mutex_vec_mutex
-//         perror("UNLOCK VECTOR MUTEX could not lock mutex_vec_mutex");
-
-//     return res;
-// }
-
-
-
 int get_vector_mutex_idx(char* vector_name)
 {
     int size = vector_size(vector_mutexes);
