@@ -1,5 +1,6 @@
 #include "array.h"
 #include <stdio.h>
+#include <pthread.h>
 
 
 
@@ -265,7 +266,7 @@ int basic_test_destroy()
 
 
 
-// test all ///////////////////////////////////////////////////////////////////////////////////////
+// all basic tests ////////////////////////////////////////////////////////////////////////////////
 
 
 
@@ -280,9 +281,139 @@ int basic_test()
 }
 
 
+
+// multithreaded test /////////////////////////////////////////////////////////////////////////////
+
+
+
+void* set_test_thread(void* p_args)
+{
+    char* vec_name = (char*) p_args;
+    
+    for (int i = 0; i < 10000; i++)
+    {
+        if (set(vec_name, i, i) != 0)
+        {
+            printf("%d\n", i);
+            printf("FAIL: TEST THREAD could not set value\n");
+            pthread_exit(NULL);
+        }
+    }
+
+    pthread_exit(NULL);
+}
+
+
+
+void* get_test_thread(void* p_args)
+{
+    char* vec_name = (char*) p_args;
+
+    int val = -1;
+    for (int i = 0; i < 10000; i++)
+    {
+        if (get(vec_name, i, &val) != 0)
+        {
+            printf("FAIL: GET TEST THREAD could not get a value\n");
+            pthread_exit(NULL);
+        }
+
+        if (val != i)
+        {
+            printf("FAIL: GET TEST THREAD wrong value\n");
+            pthread_exit(NULL);
+        }
+    }
+
+    pthread_exit(NULL);
+}
+
+
+
+int multithreaded_test()
+{
+    char vec_name[] = "multithreaded";
+    if (init(vec_name, 10000) != 1)
+    {
+        printf("FAIL: MULTITHREADED TEST could not initialize the vector\n");
+        return 0;
+    }
+
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+    pthread_t t_set_1, t_set_2;
+
+    if (pthread_create(&t_set_1, &attr, &set_test_thread, (void*) vec_name) != 0 ||
+        pthread_create(&t_set_2, &attr, &set_test_thread, (void*) vec_name) != 0)
+    {
+        printf("FAIL: MULTITHREADED TEST could not create set threads\n");
+        return 0;
+    }
+    
+    if (pthread_join(t_set_1, NULL) != 0 ||
+        pthread_join(t_set_2, NULL) != 0)
+    {
+        printf("FAIL: MULTITHREADED TEST could not join set threads\n");
+        return 0;
+    } 
+    printf("ihhaaa\n");
+    // check whether set values are ok
+    pthread_t t_get_1, t_get_2;
+
+    if (pthread_create(&t_get_1, &attr, get_test_thread, (void*) vec_name) != 0 ||
+        pthread_create(&t_get_2, &attr, get_test_thread, (void*) vec_name) != 0)
+    {
+        printf("FAIL: MULTITHREADED TEST could not create get threads\n");
+        return 0;
+    }
+
+    if (pthread_join(t_get_1, NULL) != 0 ||
+        pthread_join(t_get_2, NULL) != 0)
+    {
+        printf("FAIL: MULTITHREADED TEST could not join get threads\n");
+        return 0;
+    } 
+
+    // destroy
+    if (destroy(vec_name) != 1)
+    {
+        printf("FAIL: MULTITHREADED TEST could not destroy\n");
+        return 0;
+    }
+
+    if (pthread_attr_destroy(&attr) != 0)
+    {
+        printf("FAIL: MULTITHREADED TEST could not destroy attributes\n");
+        return 0;
+    }
+
+    printf("SUCCESS: MULTITHREADED TEST passed\n");
+    return 1;
+}
+
+
+
+// all tests //////////////////////////////////////////////////////////////////////////////////////
+
+
+
+int all_tests()
+{
+    int basic_test_res = basic_test();
+    int multi_test_res = multithreaded_test();
+
+    return basic_test_res && multi_test_res;
+}
+
+
+
+
+
 int main (int argc, char **argv)
 {
-    basic_test();
+    all_tests();
     // for (int i = 0; i < 20; i++)
     // {
     //     char name[7];

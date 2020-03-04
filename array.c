@@ -444,7 +444,7 @@ int open_resp_queue(char* prefix, char* que_name, mqd_t* p_queue, size_t msg_siz
     // flags which assure that queue with such name doesn't exist
     int flags = O_CREAT | O_EXCL | O_RDONLY;
     // will be used to generate unique name in case it's needed
-    char* random_str = "1";
+    char random_str[] = "1";
     // if name is not unique, add random number to it. If there is no more space
     // start from the beginning
     while((*p_queue = mq_open(local_que_name, flags, S_IRUSR | S_IWUSR, &attr)) == -1)
